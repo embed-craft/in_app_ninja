@@ -7,6 +7,7 @@ import 'models/campaign.dart';
 import 'models/ninja_region.dart';
 import 'models/ninja_user.dart';
 import 'renderers/campaign_renderer.dart';
+import 'widgets/embed_widget_wrapper.dart'; // Import for type checking
 
 /// AppNinja - Main SDK class for InAppNinja
 ///
@@ -25,7 +26,9 @@ class AppNinja {
   static const String _prefsKeyColors = 'ninja_colors';
 
   static String? _apiKey;
-  static String _baseUrl = 'http://localhost:4000';
+  // Default to Production URL (Render)
+  static String _baseUrl = 'https://embed-backend-w9j0.onrender.com';
+  static String get baseUrl => _baseUrl;
   static bool _initialized = false;
   static bool _debugMode = false;
   static String? _currentPage;
@@ -35,7 +38,7 @@ class AppNinja {
   static NinjaRegion? _ninjaRegion; // Region enum support
   static String?
       _region; // Region support (US, EU, IN, etc.) - kept for backward compatibility
-  static GlobalKey<NavigatorState>? _navigatorKey;
+  static GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
   static GlobalKey? _screenshotKey; // Screenshot key
   static String? _externalId; // External user ID
   static String? _sessionId; // Session ID
@@ -86,11 +89,11 @@ class AppNinja {
   ///
   /// [apiKey] - Your InAppNinja API key
   /// [userId] - Optional initial user ID
-  /// [baseUrl] - Optional custom server URL (default: http://localhost:4000)
+  /// [baseUrl] - Optional custom server URL (hidden by default, falls back to Production)
   /// [autoRender] - Enable automatic campaign rendering (default: false)
   static Future<void> init(String apiKey,
       {String userId = '',
-      String baseUrl = '',
+      String? baseUrl, // Now optional (nullable)
       bool autoRender = false}) async {
     if (_initialized) {
       debugLog('AppNinja already initialized');
@@ -99,7 +102,9 @@ class AppNinja {
 
     try {
       _apiKey = apiKey;
-      if (baseUrl.isNotEmpty) {
+      
+      // Override default URL only if a specific one is provided
+      if (baseUrl != null && baseUrl.isNotEmpty) {
         _baseUrl = baseUrl;
       }
 
@@ -126,11 +131,41 @@ class AppNinja {
         _setupAutoRendering();
       }
 
+      // Initialize Capture Manager (Dev Tools)
+      // We need context for this, which we might not have yet in init.
+      // CaptureManager needs to listen to links.
+      // Ideally this is called when UI is ready.
+      // But we can start listening.
+      // Wait, CaptureManager.init requires Context to show dialogs.
+      // We can defer this until we have context via setContext or NinjaApp.
+      
       _initSuccessCallback?.call();
     } catch (e) {
       debugPrint('Error in AppNinja.init: $e');
       _initFailureCallback?.call(e.toString());
     }
+  }
+
+  // TARGET REGISTRY (For Tooltips)
+  static final Map<String, BuildContext> _targetRegistry = {};
+
+  /// Register a widget target for finding tooltips
+  static void registerTarget(String id, BuildContext context) {
+    _targetRegistry[id] = context;
+    debugLog('📍 Registered Target: $id');
+  }
+
+  /// Unregister a widget target
+  static void unregisterTarget(String id) {
+    if (_targetRegistry.containsKey(id)) {
+      _targetRegistry.remove(id);
+      debugLog('🗑️ Unregistered Target: $id');
+    }
+  }
+
+  /// Get context for a target ID
+  static BuildContext? getTargetContext(String id) {
+    return _targetRegistry[id];
   }
 
   /// Track an event
@@ -470,7 +505,7 @@ class AppNinja {
     required GlobalKey<NavigatorState> navigatorKey,
     GlobalKey? screenshotKey,
   }) async {
-    _navigatorKey = navigatorKey;
+    navigatorKey = navigatorKey;
     _screenshotKey = screenshotKey;
     debugLog('SDK configured with navigator key and screenshot key');
   }
@@ -674,12 +709,13 @@ class AppNinja {
   /// [screenHeight] - Screen height in pixels
   static List<Map<String, dynamic>> getAllElements(String listenerId,
       double pixRatio, double screenWidth, double screenHeight) {
-    debugLog('getAllElements: $listenerId');
+    debugLog('getAllElements: Starting with listeners=$listenerId');
 
     if (_appContext == null) {
-      debugLog('No app context available for getAllElements');
+      debugLog('getAllElements: _appContext is NULL. Aborting.');
       return [];
     }
+    debugLog('getAllElements: _appContext found.');
 
     final elements = <Map<String, dynamic>>[];
 
@@ -688,6 +724,7 @@ class AppNinja {
       try {
         if (element.widget.key is ValueKey) {
           final key = (element.widget.key as ValueKey).value.toString();
+          // debugLog('Found Element: $key'); // Too verbose?
           final renderObject = element.renderObject;
 
           if (renderObject is RenderBox && renderObject.hasSize) {
@@ -695,12 +732,15 @@ class AppNinja {
             final size = renderObject.size;
 
             elements.add({
-              'key': key,
-              'x': offset.dx * pixRatio,
-              'y': offset.dy * pixRatio,
-              'width': size.width * pixRatio,
-              'height': size.height * pixRatio,
-              'visible': visibilityMap[key] ?? 0.0 > 0.5,
+              'id': key,
+              'type': element.widget.runtimeType.toString(),
+              'rect': {
+                'x': offset.dx * pixRatio,
+                'y': offset.dy * pixRatio,
+                'width': size.width * pixRatio,
+                'height': size.height * pixRatio,
+              },
+              'inViewport': _isElementVisible(offset, size, screenWidth / pixRatio, screenHeight / pixRatio),
             });
 
             _elementPositions[key] = {
@@ -718,12 +758,108 @@ class AppNinja {
     }
 
     try {
-      _appContext!.visitChildElements(recurse);
+      debugLog('getAllElements: Visiting child elements...');
+      int visitedCount = 0;
+      int keyCount = 0;
+      int visibleCount = 0;
+
+      void recurse(Element element) {
+        visitedCount++;
+        try {
+          String? foundId;
+          
+          // 1. Check for EmbedWidgetWrapper (User Preferred)
+          if (element.widget is EmbedWidgetWrapper) {
+            foundId = (element.widget as EmbedWidgetWrapper).id;
+          } 
+          // 2. Fallback to ValueKey (Legacy/Internal)
+          else if (element.widget.key is ValueKey) {
+             // Only use string keys to avoid confusion
+             final val = (element.widget.key as ValueKey).value;
+             if (val is String) foundId = val;
+          }
+
+          if (foundId != null) {
+            final key = foundId;
+            final renderObject = element.renderObject;
+            
+            debugLog('🔍 Found ID: $key (${element.widget.runtimeType})');
+
+            if (renderObject is RenderBox && renderObject.hasSize) {
+              final offset = renderObject.localToGlobal(Offset.zero);
+              final size = renderObject.size;
+              
+              // 1. Check if element is on the CURRENT ROUTE
+              bool isCurrentRoute = true;
+              try {
+                final route = ModalRoute.of(element);
+                if (route != null) {
+                  isCurrentRoute = route.isCurrent;
+                }
+              } catch (e) {
+                // Ignore errors finding route
+              }
+
+              if (!isCurrentRoute) {
+                 debugLog('   - SKIPPED: Background Route ($key)');
+              } else {
+                final isVisible = _isElementVisible(offset, size, screenWidth / pixRatio, screenHeight / pixRatio);
+                
+                // FORCE ADD if on current route, even if geometry check fails slightly
+                // This ensures we capture all user-tagged elements on the active page.
+                visibleCount++;
+                elements.add({
+                  'id': key,
+                  'type': element.widget.runtimeType.toString(),
+                  'rect': {
+                    'x': offset.dx * pixRatio,
+                    'y': offset.dy * pixRatio,
+                    'width': size.width * pixRatio,
+                    'height': size.height * pixRatio,
+                  },
+                  'inViewport': isVisible, 
+                });
+
+                _elementPositions[key] = {
+                  'x': offset.dx,
+                  'y': offset.dy,
+                  'width': size.width,
+                  'height': size.height,
+                };
+              }
+            } else {
+               debugLog('   - SKIPPED: No RenderBox or No Size (RO: $renderObject)');
+            }
+          }
+          element.visitChildren(recurse);
+        } catch (e) {
+          debugLog('Error visiting element: $e');
+        }
+      }
+
+      // Use _appContext (NinjaApp Root) if available, as it covers everything.
+      // Fallback to Navigator Key (Active Page) if not.
+      final rootContext = _appContext ?? navigatorKey.currentContext;
+      
+      if (rootContext == null) {
+        debugLog('❌ getAllElements: No context available');
+        return [];
+      }
+      
+      rootContext.visitChildElements(recurse);
+      debugLog('getAllElements: Scanned $visitedCount elements. Found $keyCount ValueKeys. valid & visible: $visibleCount.');
+      
     } catch (e) {
-      debugLog('Error in getAllElements: $e');
+      debugLog('Error in getAllElements tree traversal: $e');
     }
 
     return elements;
+  }
+
+  static bool _isElementVisible(Offset offset, Size size, double screenWidth, double screenHeight) {
+    final centerX = offset.dx + size.width / 2;
+    final centerY = offset.dy + size.height / 2;
+    return centerX >= 0 && centerX <= screenWidth && centerY >= 0 && centerY <= screenHeight;
   }
 
   /// Check if views with given keys are present
@@ -1008,8 +1144,7 @@ class AppNinja {
   /// Get current region as enum
   static NinjaRegion? get ninjaRegion => _ninjaRegion;
 
-  /// Get navigator key
-  static GlobalKey<NavigatorState>? get navigatorKey => _navigatorKey;
+
 
   /// Get screenshot key (nudgecore_v2 compatibility)
   static GlobalKey? get screenshotKey => _screenshotKey;

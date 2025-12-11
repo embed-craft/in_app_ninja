@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 import '../../models/campaign.dart';
 
 class FloaterNudgeRenderer extends StatefulWidget {
@@ -413,7 +414,7 @@ class _FloaterNudgeRendererState extends State<FloaterNudgeRenderer> with Single
       fit: _parseBoxFit(content['objectFit'] ?? style['fit']),
       errorBuilder: (_, __, ___) => Container(
         color: Colors.grey[200],
-        child: const Icon(Icons.image, color: Colors.grey[400]),
+        child: Icon(Icons.image, color: Colors.grey[400]),
       ),
     );
 
@@ -828,6 +829,23 @@ class _FloaterNudgeRendererState extends State<FloaterNudgeRenderer> with Single
     );
   }
 
+  IconData? _getIconData(String? name) {
+    switch (name) {
+      case 'ArrowRight': return Icons.arrow_forward;
+      case 'ArrowLeft': return Icons.arrow_back;
+      case 'Play': return Icons.play_arrow;
+      case 'Search': return Icons.search;
+      case 'Home': return Icons.home;
+      case 'Check': return Icons.check;
+      case 'X': return Icons.close;
+      case 'Download': return Icons.download;
+      case 'Upload': return Icons.upload;
+      case 'User': return Icons.person;
+      case 'Settings': return Icons.settings;
+      default: return null;
+    }
+  }
+
   Widget _buildButtonGroupComponent(Map<String, dynamic> component) {
     final content = component['content'] as Map<String, dynamic>? ?? {};
     final style = component['style'] as Map<String, dynamic>? ?? {};
@@ -868,6 +886,7 @@ class _FloaterNudgeRendererState extends State<FloaterNudgeRenderer> with Single
       );
     }
   }
+
 
   Widget _buildListComponent(Map<String, dynamic> component) {
     final content = component['content'] as Map<String, dynamic>? ?? {};
@@ -1470,3 +1489,6 @@ class _EntranceAnimatorState extends State<_EntranceAnimator> with SingleTickerP
     );
   }
 }
+
+
+

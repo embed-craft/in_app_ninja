@@ -471,7 +471,7 @@ class _PIPNudgeRendererV2State extends State<PIPNudgeRendererV2> with SingleTick
       fit: _parseBoxFit(content['objectFit'] ?? style['fit']),
       errorBuilder: (_, __, ___) => Container(
         color: Colors.grey[200],
-        child: const Icon(Icons.image, color: Colors.grey[400]),
+        child: Icon(Icons.image, color: Colors.grey[400]),
       ),
     );
 
@@ -766,110 +766,49 @@ class _PIPNudgeRendererV2State extends State<PIPNudgeRendererV2> with SingleTick
          decoration = decoration.copyWith(
           color: Colors.white,
           border: Border.all(color: themeColor.withOpacity(0.2)),
-          padding: EdgeInsets.zero, // Reset padding for custom layout
         );
+        padding = EdgeInsets.zero; // Reset padding for custom layout
         textStyle = textStyle.copyWith(color: themeColor);
         break;
     }
-
-    // Build Content Row
-    List<Widget> rowChildren = [
-      Text(text, style: textStyle),
-    ];
-
-    if (iconWidget != null) {
-      if (iconPosition == 'left') {
-        rowChildren.insert(0, Padding(padding: const EdgeInsets.only(right: 8), child: iconWidget));
-      } else {
-        rowChildren.add(Padding(padding: const EdgeInsets.only(left: 8), child: iconWidget));
-      }
-    }
-
-    buttonContent = Row(
+    // Build Button Content
+    Widget contentWidget = Row(
       mainAxisSize: MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
-      children: rowChildren,
-    );
-
-    // Special handling for Two-Tone
-    if (variant == 'two-tone') {
-      buttonContent = Row(
-        children: [
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 20),
-              child: Text(text, textAlign: TextAlign.center, style: textStyle),
-            ),
-          ),
-          if (iconWidget != null)
-            Container(
-              padding: const EdgeInsets.all(12),
-              color: themeColor,
-              child: Icon((iconWidget as Icon).icon, color: Colors.white, size: 16),
-            ),
+      children: [
+        if (iconWidget != null && iconPosition == 'left') ...[
+          iconWidget,
+          const SizedBox(width: 8),
         ],
-      );
-    }
-
-    // Special handling for Cyberpunk ClipPath
-    Widget container = Container(
-      decoration: variant == 'cyberpunk' ? null : decoration, // ClipPath handles decoration for cyberpunk
-      padding: variant == 'two-tone' ? EdgeInsets.zero : padding,
-      width: variant == 'block' ? double.infinity : null,
-      child: buttonContent,
+        Flexible(
+          child: Text(text, style: textStyle, textAlign: TextAlign.center),
+        ),
+        if (iconWidget != null && iconPosition == 'right') ...[
+          const SizedBox(width: 8),
+          iconWidget,
+        ],
+      ],
     );
 
-    if (variant == 'block') {
-      // Wrap in LayoutBuilder to prevent crash in Row (unbounded width)
-      container = LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.hasBoundedWidth) {
-            return Container(
-              decoration: variant == 'cyberpunk' ? null : decoration,
-              padding: variant == 'two-tone' ? EdgeInsets.zero : padding,
-              width: double.infinity,
-              child: buttonContent,
-            );
-          } else {
-            // Fallback for unbounded width (e.g. inside Row)
-            return Container(
-              decoration: variant == 'cyberpunk' ? null : decoration,
-              padding: variant == 'two-tone' ? EdgeInsets.zero : padding,
-              child: buttonContent,
-            );
-          }
-        },
-      );
-    }
-
-    if (variant == 'cyberpunk') {
-      container = ClipPath(
-        clipper: _CyberpunkClipper(),
-        child: Container(
-          decoration: decoration,
-          padding: padding,
-          child: buttonContent,
-        ),
-      );
-    }
-    
-    if (variant == 'glass') {
-       container = ClipRRect(
-         borderRadius: BorderRadius.circular(borderRadius),
-         child: BackdropFilter(
-           filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-           child: container,
-         ),
-       );
-    }
+    Widget child = Container(
+      padding: padding,
+      decoration: decoration,
+      child: contentWidget,
+    );
 
     return GestureDetector(
       onTap: () {
+        debugPrint('Action Triggered: $action');
         final payload = Map<String, dynamic>.from(component);
         payload['formData'] = _formData;
         widget.onCTAClick?.call(action, payload);
-      return const SizedBox.shrink();
-    }
+      },
+      child: child,
+    );
+  }
+
+  Widget _buildComponent(Map<String, dynamic> component) {
+    final type = component['type'] as String? ?? 'container';
 
     Widget child;
     switch (type) {
@@ -939,6 +878,17 @@ class _PIPNudgeRendererV2State extends State<PIPNudgeRendererV2> with SingleTick
 
   // Removed duplicate/old component builders (Badge, Gradient, Statistic, ProgressCircle, Countdown)
   // New implementations are located below with other components.
+
+  Widget _buildVideoComponent(Map<String, dynamic> component) {
+    // Basic video placeholder
+    return Container(
+      height: 200,
+      color: Colors.black,
+      child: Center(
+        child: Icon(Icons.play_circle_outline, color: Colors.white, size: 48),
+      ),
+    );
+  }
 
   Widget _buildListComponent(Map<String, dynamic> component) {
     final content = component['content'] as Map<String, dynamic>? ?? {};
@@ -1705,44 +1655,6 @@ class _PIPNudgeRendererV2State extends State<PIPNudgeRendererV2> with SingleTick
     return null;
   }
 
-  List<BoxShadow>? _parseBoxShadow(List? shadows) {
-    if (shadows == null || shadows.isEmpty) return null;
-    return shadows.map((s) {
-      final color = _parseColor(s['color']) ?? Colors.black.withOpacity(0.2);
-      final blur = (s['blur'] as num?)?.toDouble() ?? 4.0;
-      final spread = (s['spread'] as num?)?.toDouble() ?? 0.0;
-      final x = (s['x'] as num?)?.toDouble() ?? 0.0;
-      final y = (s['y'] as num?)?.toDouble() ?? 2.0;
-      return BoxShadow(
-        color: color,
-        blurRadius: blur,
-        spreadRadius: spread,
-        offset: Offset(x, y),
-      );
-      default: return CrossAxisAlignment.center;
-    }
-  }
-
-  WrapAlignment _wrapAlignment(MainAxisAlignment main) {
-    switch (main) {
-      case MainAxisAlignment.start: return WrapAlignment.start;
-      case MainAxisAlignment.end: return WrapAlignment.end;
-      case MainAxisAlignment.center: return WrapAlignment.center;
-      case MainAxisAlignment.spaceBetween: return WrapAlignment.spaceBetween;
-      case MainAxisAlignment.spaceAround: return WrapAlignment.spaceAround;
-      case MainAxisAlignment.spaceEvenly: return WrapAlignment.spaceEvenly;
-    }
-  }
-
-  WrapCrossAlignment _wrapCrossAlignment(CrossAxisAlignment cross) {
-    switch (cross) {
-      case CrossAxisAlignment.start: return WrapCrossAlignment.start;
-      case CrossAxisAlignment.end: return WrapCrossAlignment.end;
-      case CrossAxisAlignment.center: return WrapCrossAlignment.center;
-      default: return WrapCrossAlignment.center;
-    }
-  }
-
   BoxFit _parseBoxFit(String? value) {
     switch (value) {
       case 'contain': return BoxFit.contain;
@@ -1755,6 +1667,31 @@ class _PIPNudgeRendererV2State extends State<PIPNudgeRendererV2> with SingleTick
       default: return BoxFit.cover;
     }
   }
+
+  MainAxisAlignment _parseMainAxisAlignment(String? value) {
+    switch (value) {
+      case 'start': return MainAxisAlignment.start;
+      case 'end': return MainAxisAlignment.end;
+      case 'center': return MainAxisAlignment.center;
+      case 'space-between': return MainAxisAlignment.spaceBetween;
+      case 'space-around': return MainAxisAlignment.spaceAround;
+      case 'space-evenly': return MainAxisAlignment.spaceEvenly;
+      default: return MainAxisAlignment.start;
+    }
+  }
+
+  CrossAxisAlignment _parseCrossAxisAlignment(String? value) {
+    switch (value) {
+      case 'start': return CrossAxisAlignment.start;
+      case 'end': return CrossAxisAlignment.end;
+      case 'center': return CrossAxisAlignment.center;
+      case 'stretch': return CrossAxisAlignment.stretch;
+      case 'baseline': return CrossAxisAlignment.baseline;
+      default: return CrossAxisAlignment.center;
+    }
+  }
+
+
 
   TextAlign _parseTextAlign(String? value) {
     switch (value) {
@@ -2261,7 +2198,7 @@ class _PIPNudgeRendererV2State extends State<PIPNudgeRendererV2> with SingleTick
               ],
             ),
           ),
-        wrappedBar,
+        barWidget,
       ],
     );
   }

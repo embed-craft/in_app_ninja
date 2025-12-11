@@ -441,7 +441,7 @@ class _BannerNudgeRendererState extends State<BannerNudgeRenderer> with SingleTi
       fit: _parseBoxFit(content['objectFit'] ?? style['fit']),
       errorBuilder: (_, __, ___) => Container(
         color: Colors.grey[200],
-        child: const Icon(Icons.image, color: Colors.grey[400]),
+        child: Icon(Icons.image, color: Colors.grey[400]),
       ),
     );
 
@@ -736,8 +736,8 @@ class _BannerNudgeRendererState extends State<BannerNudgeRenderer> with SingleTi
          decoration = decoration.copyWith(
           color: Colors.white,
           border: Border.all(color: themeColor.withOpacity(0.2)),
-          padding: EdgeInsets.zero, // Reset padding for custom layout
         );
+        padding = EdgeInsets.zero; // Reset padding for custom layout
         textStyle = textStyle.copyWith(color: themeColor);
         break;
     }
@@ -1648,121 +1648,7 @@ class _BannerNudgeRendererState extends State<BannerNudgeRenderer> with SingleTi
     );
   }
 
-  Widget _applyStyle(Widget child, Map<String, dynamic> style) {
-    // 1. Transform (Rotate, Scale, Translate)
-    final transform = style['transform'];
-    if (transform is Map) {
-      final rotate = (transform['rotate'] as num?)?.toDouble() ?? 0.0;
-      final scale = (transform['scale'] as num?)?.toDouble() ?? 1.0;
-      final dx = (transform['translateX'] as num?)?.toDouble() ?? 0.0;
-      final dy = (transform['translateY'] as num?)?.toDouble() ?? 0.0;
 
-      if (rotate != 0 || scale != 1 || dx != 0 || dy != 0) {
-        child = Transform(
-          transform: Matrix4.identity()
-            ..translate(dx, dy)
-            ..rotateZ(rotate * math.pi / 180)
-            ..scale(scale),
-          alignment: Alignment.center,
-          child: child,
-        );
-      }
-    }
-
-    // 2. Padding
-    final padding = _parseEdgeInsets(style['padding']);
-    if (padding != null) {
-      child = Padding(padding: padding, child: child);
-    }
-
-    // 3. Margin
-    final margin = _parseEdgeInsets(style['margin']);
-    if (margin != null) {
-      child = Padding(padding: margin, child: child);
-    }
-
-    // 4. Opacity
-    final opacity = (style['opacity'] as num?)?.toDouble() ?? 1.0;
-    if (opacity < 1.0) {
-      child = Opacity(opacity: opacity, child: child);
-    }
-
-    // 5. Backdrop Filter (Blur)
-    final backdropFilter = style['backdropFilter'] as String?;
-    if (backdropFilter != null && backdropFilter.startsWith('blur')) {
-      // Parse "blur(10px)"
-      final match = RegExp(r'blur\((\d+(?:\.\d+)?)px\)').firstMatch(backdropFilter);
-      if (match != null) {
-        final sigma = double.tryParse(match.group(1) ?? '0') ?? 0;
-        if (sigma > 0) {
-          child = ClipRRect(
-            // Clip is needed for backdrop filter to respect bounds usually, 
-            // but here we might just want to apply it to the child area.
-            // Actually, BackdropFilter applies to everything BEHIND the child.
-            // If we want to blur the background of this component, we usually use it in a Stack.
-            // But if this is "glassmorphism" style on the component itself, 
-            // it usually implies the component has a semi-transparent bg and we blur what's behind it.
-            // Let's wrap in ClipRRect to respect border radius if possible, but we don't have radius here easily.
-            // We'll just wrap in BackdropFilter.
-            child: BackdropFilter(
-              filter: ui.ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
-              child: child,
-            ),
-          );
-        }
-      }
-    }
-
-    // 5.5 Filters (Brightness, Contrast, Grayscale)
-    final filter = style['filter'] as String?;
-    if (filter != null) {
-      if (filter.contains('grayscale')) {
-         final match = RegExp(r'grayscale\((\d+(?:\.\d+)?)%\)').firstMatch(filter);
-         final percent = double.tryParse(match?.group(1) ?? '0') ?? 0;
-         if (percent > 0) {
-           child = ColorFiltered(
-             colorFilter: ColorFilter.matrix([
-               0.2126 + 0.7874 * (1 - percent/100), 0.7152 - 0.7152 * (1 - percent/100), 0.0722 - 0.0722 * (1 - percent/100), 0, 0,
-               0.2126 - 0.2126 * (1 - percent/100), 0.7152 + 0.2848 * (1 - percent/100), 0.0722 - 0.0722 * (1 - percent/100), 0, 0,
-               0.2126 - 0.2126 * (1 - percent/100), 0.7152 - 0.7152 * (1 - percent/100), 0.0722 + 0.9278 * (1 - percent/100), 0, 0,
-               0, 0, 0, 1, 0,
-             ]),
-             child: child,
-           );
-         }
-      }
-      // Note: Brightness and Contrast are harder to apply directly to a generic widget without a specific shader or ColorFilter matrix.
-      // Grayscale is the most common request.
-    }
-
-    // 6. Background & Border (Container)
-    // Only wrap in Container if there are styles that require it
-    // and the child isn't already handling it (like Button or Container component)
-    // However, for generic styling, wrapping is safe.
-    final bgColor = _parseColor(style['backgroundColor']);
-    final gradient = _parseGradient(style['backgroundGradient']);
-    final borderColor = _parseColor(style['borderColor']);
-    final borderWidth = (style['borderWidth'] as num?)?.toDouble() ?? 0.0;
-    final borderRadius = (style['borderRadius'] as num?)?.toDouble() ?? 0.0;
-    final shadows = _parseBoxShadow(style['shadows'] as List?);
-
-    if (bgColor != null || gradient != null || (borderColor != null && borderWidth > 0) || (shadows != null && shadows.isNotEmpty)) {
-      child = Container(
-        decoration: BoxDecoration(
-          color: bgColor,
-          gradient: gradient,
-          borderRadius: BorderRadius.circular(borderRadius),
-          border: borderColor != null && borderWidth > 0
-              ? Border.all(color: borderColor, width: borderWidth)
-              : null,
-          boxShadow: shadows,
-        ),
-        child: child,
-      );
-    }
-
-    return child;
-  }
 
   // --- Helpers ---
 
@@ -1875,8 +1761,7 @@ class _BannerNudgeRendererState extends State<BannerNudgeRenderer> with SingleTi
         spreadRadius: spread,
         offset: Offset(x, y),
       );
-      default: return CrossAxisAlignment.center;
-    }
+    }).toList();
   }
 
   WrapAlignment _wrapAlignment(MainAxisAlignment main) {
@@ -1999,24 +1884,69 @@ class _BannerNudgeRendererState extends State<BannerNudgeRenderer> with SingleTi
     }
   }
 
-  WrapAlignment _wrapAlignment(MainAxisAlignment alignment) {
-    switch (alignment) {
-      case MainAxisAlignment.start: return WrapAlignment.start;
-      case MainAxisAlignment.end: return WrapAlignment.end;
-      case MainAxisAlignment.center: return WrapAlignment.center;
-      case MainAxisAlignment.spaceBetween: return WrapAlignment.spaceBetween;
-      case MainAxisAlignment.spaceAround: return WrapAlignment.spaceAround;
-      case MainAxisAlignment.spaceEvenly: return WrapAlignment.spaceEvenly;
+  // Duplicate methods removed.
+
+  // Helper Methods
+  double? _parseHeight(dynamic value, double screenHeight) {
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      if (value.endsWith('%')) {
+        final percent = double.tryParse(value.replaceAll('%', '')) ?? 0;
+        return screenHeight * (percent / 100);
+      }
+      return double.tryParse(value);
+    }
+    return null;
+  }
+
+  BorderRadius _parseBorderRadius(dynamic value) {
+    if (value is num) return BorderRadius.circular(value.toDouble());
+    if (value is Map) {
+      return BorderRadius.only(
+        topLeft: Radius.circular((value['topLeft'] as num?)?.toDouble() ?? 0),
+        topRight: Radius.circular((value['topRight'] as num?)?.toDouble() ?? 0),
+        bottomLeft: Radius.circular((value['bottomLeft'] as num?)?.toDouble() ?? 0),
+        bottomRight: Radius.circular((value['bottomRight'] as num?)?.toDouble() ?? 0),
+      );
+    }
+    // Default or 'all' handling
+    return BorderRadius.circular(0);
+  }
+
+  MainAxisAlignment _parseMainAxisAlignment(String? value) {
+    switch (value) {
+      case 'start': return MainAxisAlignment.start;
+      case 'end': return MainAxisAlignment.end;
+      case 'center': return MainAxisAlignment.center;
+      case 'space-between': return MainAxisAlignment.spaceBetween;
+      case 'space-around': return MainAxisAlignment.spaceAround;
+      case 'space-evenly': return MainAxisAlignment.spaceEvenly;
+      default: return MainAxisAlignment.start;
     }
   }
 
-  WrapCrossAlignment _wrapCrossAlignment(CrossAxisAlignment alignment) {
-    switch (alignment) {
-      case CrossAxisAlignment.start: return WrapCrossAlignment.start;
-      case CrossAxisAlignment.end: return WrapCrossAlignment.end;
-      case CrossAxisAlignment.center: return WrapCrossAlignment.center;
-      case CrossAxisAlignment.stretch: return WrapCrossAlignment.center; // Wrap doesn't support stretch directly
-      case CrossAxisAlignment.baseline: return WrapCrossAlignment.center; // Wrap doesn't support baseline directly
+  CrossAxisAlignment _parseCrossAxisAlignment(String? value) {
+    switch (value) {
+      case 'start': return CrossAxisAlignment.start;
+      case 'end': return CrossAxisAlignment.end;
+      case 'center': return CrossAxisAlignment.center;
+      case 'stretch': return CrossAxisAlignment.stretch;
+      case 'baseline': return CrossAxisAlignment.baseline;
+      default: return CrossAxisAlignment.center;
+    }
+  }
+
+  Curve _parseCurve(String? value) {
+    switch (value) {
+      case 'easeIn': return Curves.easeIn;
+      case 'easeOut': return Curves.easeOut;
+      case 'easeInOut': return Curves.easeInOut;
+      case 'linear': return Curves.linear;
+      case 'bounceIn': return Curves.bounceIn;
+      case 'bounceOut': return Curves.bounceOut;
+      case 'elasticIn': return Curves.elasticIn;
+      case 'elasticOut': return Curves.elasticOut;
+      default: return Curves.linear;
     }
   }
 
@@ -2431,7 +2361,7 @@ class _BannerNudgeRendererState extends State<BannerNudgeRenderer> with SingleTi
               ],
             ),
           ),
-        wrappedBar,
+        barWidget,
       ],
     );
   }
@@ -3250,6 +3180,17 @@ class _EntranceAnimatorState extends State<_EntranceAnimator> with SingleTickerP
       });
     } else {
       _controller.forward();
+    }
+  }
+
+  Curve _parseCurve(String easing) {
+    switch (easing) {
+      case 'easeIn': return Curves.easeIn;
+      case 'easeOut': return Curves.easeOut;
+      case 'easeInOut': return Curves.easeInOut;
+      case 'linear': return Curves.linear;
+      case 'easeOutBack': return Curves.easeOutBack;
+      default: return Curves.easeOut;
     }
   }
 

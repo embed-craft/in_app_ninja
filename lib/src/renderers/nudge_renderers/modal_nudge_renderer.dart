@@ -471,7 +471,7 @@ class _ModalNudgeRendererState extends State<ModalNudgeRenderer> with SingleTick
       fit: _parseBoxFit(content['objectFit'] ?? style['fit']),
       errorBuilder: (_, __, ___) => Container(
         color: Colors.grey[200],
-        child: const Icon(Icons.image, color: Colors.grey[400]),
+        child: Icon(Icons.image, color: Colors.grey[400]),
       ),
     );
 
@@ -798,6 +798,23 @@ class _ModalNudgeRendererState extends State<ModalNudgeRenderer> with SingleTick
       },
       child: child,
     );
+  }
+
+  IconData? _getIconData(String? name) {
+    switch (name) {
+      case 'ArrowRight': return Icons.arrow_forward;
+      case 'ArrowLeft': return Icons.arrow_back;
+      case 'Play': return Icons.play_arrow;
+      case 'Search': return Icons.search;
+      case 'Home': return Icons.home;
+      case 'Check': return Icons.check;
+      case 'X': return Icons.close;
+      case 'Download': return Icons.download;
+      case 'Upload': return Icons.upload;
+      case 'User': return Icons.person;
+      case 'Settings': return Icons.settings;
+      default: return null;
+    }
   }
 
   // --- Missing Component Builders ---

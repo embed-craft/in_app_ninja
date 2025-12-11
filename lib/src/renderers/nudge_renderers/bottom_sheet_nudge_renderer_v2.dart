@@ -100,7 +100,7 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
               children: [
                 SingleChildScrollView(
                   child: Padding(
-                    padding: padding,
+                    padding: padding ?? EdgeInsets.zero,
                     child: _buildContent(responsiveConfig),
                   ),
                 ),
@@ -278,7 +278,7 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       fit: _parseBoxFit(content['objectFit'] ?? style['fit']),
       errorBuilder: (_, __, ___) => Container(
         color: Colors.grey[200],
-        child: const Icon(Icons.image, color: Colors.grey[400]),
+        child: Icon(Icons.image, color: Colors.grey[400]),
       ),
     );
 
@@ -573,8 +573,8 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
          decoration = decoration.copyWith(
           color: Colors.white,
           border: Border.all(color: themeColor.withOpacity(0.2)),
-          padding: EdgeInsets.zero, // Reset padding for custom layout
         );
+        padding = EdgeInsets.zero; // Reset padding for custom layout
         textStyle = textStyle.copyWith(color: themeColor);
         break;
     }
@@ -1619,12 +1619,11 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
         spreadRadius: spread,
         offset: Offset(x, y),
       );
-      default: return CrossAxisAlignment.center;
-    }
+    }).toList();
   }
 
-  WrapAlignment _wrapAlignment(MainAxisAlignment main) {
-    switch (main) {
+  WrapAlignment _wrapAlignment(MainAxisAlignment alignment) {
+    switch (alignment) {
       case MainAxisAlignment.start: return WrapAlignment.start;
       case MainAxisAlignment.end: return WrapAlignment.end;
       case MainAxisAlignment.center: return WrapAlignment.center;
@@ -1634,12 +1633,13 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
     }
   }
 
-  WrapCrossAlignment _wrapCrossAlignment(CrossAxisAlignment cross) {
-    switch (cross) {
+  WrapCrossAlignment _wrapCrossAlignment(CrossAxisAlignment alignment) {
+    switch (alignment) {
       case CrossAxisAlignment.start: return WrapCrossAlignment.start;
       case CrossAxisAlignment.end: return WrapCrossAlignment.end;
       case CrossAxisAlignment.center: return WrapCrossAlignment.center;
-      default: return WrapCrossAlignment.center;
+      case CrossAxisAlignment.stretch: return WrapCrossAlignment.center; // Wrap doesn't support stretch directly
+      case CrossAxisAlignment.baseline: return WrapCrossAlignment.center; // Wrap doesn't support baseline directly
     }
   }
 
@@ -1653,6 +1653,29 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       case 'none': return BoxFit.none;
       case 'scaleDown': return BoxFit.scaleDown;
       default: return BoxFit.cover;
+    }
+  }
+
+  MainAxisAlignment _parseMainAxisAlignment(String? value) {
+    switch (value) {
+      case 'start': return MainAxisAlignment.start;
+      case 'end': return MainAxisAlignment.end;
+      case 'center': return MainAxisAlignment.center;
+      case 'space-between': return MainAxisAlignment.spaceBetween;
+      case 'space-around': return MainAxisAlignment.spaceAround;
+      case 'space-evenly': return MainAxisAlignment.spaceEvenly;
+      default: return MainAxisAlignment.start;
+    }
+  }
+
+  CrossAxisAlignment _parseCrossAxisAlignment(String? value) {
+    switch (value) {
+      case 'start': return CrossAxisAlignment.start;
+      case 'end': return CrossAxisAlignment.end;
+      case 'center': return CrossAxisAlignment.center;
+      case 'stretch': return CrossAxisAlignment.stretch;
+      case 'baseline': return CrossAxisAlignment.baseline;
+      default: return CrossAxisAlignment.center;
     }
   }
 
@@ -1729,26 +1752,7 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
     }
   }
 
-  WrapAlignment _wrapAlignment(MainAxisAlignment alignment) {
-    switch (alignment) {
-      case MainAxisAlignment.start: return WrapAlignment.start;
-      case MainAxisAlignment.end: return WrapAlignment.end;
-      case MainAxisAlignment.center: return WrapAlignment.center;
-      case MainAxisAlignment.spaceBetween: return WrapAlignment.spaceBetween;
-      case MainAxisAlignment.spaceAround: return WrapAlignment.spaceAround;
-      case MainAxisAlignment.spaceEvenly: return WrapAlignment.spaceEvenly;
-    }
-  }
 
-  WrapCrossAlignment _wrapCrossAlignment(CrossAxisAlignment alignment) {
-    switch (alignment) {
-      case CrossAxisAlignment.start: return WrapCrossAlignment.start;
-      case CrossAxisAlignment.end: return WrapCrossAlignment.end;
-      case CrossAxisAlignment.center: return WrapCrossAlignment.center;
-      case CrossAxisAlignment.stretch: return WrapCrossAlignment.center; // Wrap doesn't support stretch directly
-      case CrossAxisAlignment.baseline: return WrapCrossAlignment.center; // Wrap doesn't support baseline directly
-    }
-  }
 
   String _substituteVariables(String text, List? variables) {
     // if (variables == null || variables.isEmpty) return text; // Removed to allow _formData substitution
@@ -2161,7 +2165,7 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
               ],
             ),
           ),
-        wrappedBar,
+        barWidget,
       ],
     );
   }

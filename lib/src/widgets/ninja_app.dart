@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../app_ninja.dart';
+import 'package:screenshot/screenshot.dart';
+import '../utils/capture_manager.dart';
 
 /// NinjaApp Wrapper Widget
 ///
@@ -27,43 +29,72 @@ class NinjaApp extends StatefulWidget {
 }
 
 class _NinjaAppState extends State<NinjaApp> with WidgetsBindingObserver {
+  // Local Controller (Alive with this State)
+  final ScreenshotController _localController = ScreenshotController();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
+    // Register this controller with CaptureManager
+    CaptureManager.registerScreenshotCallback((delay, pixelRatio) {
+      return _localController.capture(delay: delay, pixelRatio: pixelRatio);
+    });
+
     // Set context after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      AppNinja.setGlobalContext(context);
-      print('✅ NinjaApp: Global context set for auto-rendering');
+      AppNinja.setGlobalContext(context); // For Auto-Render
+      AppNinja.setContext(context); // For Data Mining (Root)
+      CaptureManager.init(context);
+      debugPrint('✅ NinjaApp: Key Registered for Capture');
     });
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    // Update context when dependencies change
-    AppNinja.setGlobalContext(context);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      // App resumed, refresh campaigns
-      print('📱 App resumed, refreshing campaigns...');
-      AppNinja.autoFetchCampaigns();
-    }
-  }
+// ... existing lifecycle methods ...
 
   @override
   Widget build(BuildContext context) {
-    return widget.child;
+    return Stack(
+      children: [
+        Screenshot(
+          controller: _localController, 
+          child: widget.child,
+        ),
+        
+        // Capture Buttons Layer (Controlled by CaptureManager)
+        ValueListenableBuilder<bool>(
+          valueListenable: CaptureManager.showCaptureUi,
+          builder: (ctx, isVisible, _) {
+            if (!isVisible) return const SizedBox.shrink();
+
+            return Positioned(
+              bottom: 50,
+              right: 20,
+              child: Material(
+                color: Colors.transparent,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FloatingActionButton.extended(
+                      onPressed: () => CaptureManager.startCaptureFlow(context),
+                      label: const Text('Capture Page'),
+                      icon: const Icon(Icons.camera_alt),
+                      backgroundColor: Colors.redAccent,
+                    ),
+                    const SizedBox(height: 10),
+                    FloatingActionButton.small(
+                      onPressed: CaptureManager.closeCaptureMode,
+                      child: const Icon(Icons.close),
+                      backgroundColor: Colors.grey,
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
   }
 }

@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import '../models/campaign.dart';
-import 'nudge_renderers/modal_nudge_renderer_v2.dart';
-import 'nudge_renderers/banner_nudge_renderer_v2.dart';
-import 'nudge_renderers/tooltip_nudge_renderer_v2.dart';
+import 'nudge_renderers/modal_nudge_renderer.dart';
+import 'nudge_renderers/banner_nudge_renderer.dart';
+import 'nudge_renderers/tooltip_nudge_renderer.dart';
 import 'nudge_renderers/bottom_sheet_nudge_renderer_v2.dart';
 import 'nudge_renderers/pip_nudge_renderer_v2.dart';
 import 'nudge_renderers/scratch_card_renderer.dart';
-import 'nudge_renderers/story_carousel_renderer.dart';
 import 'nudge_renderers/story_carousel_renderer.dart';
 import 'nudge_renderers/inline_nudge_renderer.dart';
 import 'nudge_renderers/floater_nudge_renderer.dart';
@@ -160,7 +159,7 @@ class NinjaCampaignRenderer {
       };
     }
     // For floating types, use overlay
-    else if (['pip', 'floater', 'floating', 'banner'].contains(type)) {
+    else if (['pip', 'floater', 'floating', 'banner', 'tooltip'].contains(type)) {
       final overlay = Overlay.of(context);
       late OverlayEntry entry;
 

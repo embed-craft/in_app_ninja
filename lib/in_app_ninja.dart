@@ -18,6 +18,7 @@ export 'src/app_ninja.dart';
 export 'src/widgets/ninja_app.dart'; // NEW: Auto-render wrapper
 export 'src/observers/ninja_auto_observer.dart'; // NEW: Auto screen tracking
 export 'src/widgets/ninja_widget.dart';
+export 'src/widgets/embed_widget_wrapper.dart'; // NEW: Explicit ID wrapper
 export 'src/widgets/ninja_app_component.dart';
 export 'src/widgets/ninja_stories.dart';
 export 'src/widgets/ninja_tracked_view.dart'

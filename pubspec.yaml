@@ -17,6 +17,9 @@ dependencies:
   shared_preferences: ^2.0.0
   visibility_detector: ^0.4.0
   youtube_player_flutter: ^9.0.3
+  app_links: ^6.3.0
+  screenshot: ^3.0.0
+  flutter_widget_from_html: ^0.10.0
 
 dev_dependencies:
   flutter_test:
