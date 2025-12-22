@@ -77,6 +77,7 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final backgroundColor = _parseColor(config['backgroundColor']) ?? const Color(0xFF1F2937);
     final textColor = _parseColor(config['textColor']) ?? Colors.white;
     
+    // Default Target: Center of Screen
     double targetX = (config['targetX'] as num?)?.toDouble() ?? MediaQuery.of(context).size.width / 2;
     double targetY = (config['targetY'] as num?)?.toDouble() ?? MediaQuery.of(context).size.height / 2;
     double targetWidth = 0;
@@ -96,7 +97,7 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
            targetWidth = renderBox.size.width;
            targetHeight = renderBox.size.height;
            
-           // Adjust target point to center specific edge based on position
+           // Adjust target point to specific edge based on position
            if (position == 'bottom') {
              targetX += targetWidth / 2;
              targetY += targetHeight;
@@ -110,8 +111,6 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
              targetY += targetHeight / 2;
            }
         }
-      } else {
-        debugPrint('⚠️ Tooltip Target NOT Found: $targetId');
       }
     }
 
@@ -123,8 +122,31 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final Color overlayColor = _parseColor(overlayColorStr)?.withOpacity((config['overlayOpacity'] as num?)?.toDouble() ?? 0.3) 
                              ?? Colors.black.withOpacity(0.3);
     
-    final double targetRoundness = (config['targetRoundness'] as num?)?.toDouble() ?? 0.0; // 0 = Rect, 50/100 = Circle
+    final double targetRoundness = (config['targetRoundness'] as num?)?.toDouble() ?? 0.0;
     final BoxShape targetShape = targetRoundness > 20 ? BoxShape.circle : BoxShape.rectangle;
+
+    // Calculate Tooltip Offsets
+    // Since we don't know the tooltip size, we use FractionalTranslation to center/offset it.
+    double? left, top, right, bottom;
+    Offset translation = Offset.zero;
+
+    if (position == 'bottom') {
+      left = targetX;
+      top = targetY + 10; // Gap
+      translation = const Offset(-0.5, 0); // Center Horizontally
+    } else if (position == 'top') {
+      left = targetX;
+      bottom = MediaQuery.of(context).size.height - targetY + 10;
+      translation = const Offset(-0.5, 0); // Center Horizontally
+    } else if (position == 'right') {
+      left = targetX + 10;
+      top = targetY;
+      translation = const Offset(0, -0.5); // Center Vertically
+    } else if (position == 'left') {
+      right = MediaQuery.of(context).size.width - targetX + 10;
+      top = targetY;
+      translation = const Offset(0, -0.5); // Center Vertically
+    }
 
     return Material(
       color: Colors.transparent,
@@ -138,122 +160,183 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
             ),
           ),
 
-          // Tooltip positioned near target
+          // Tooltip Layer
           Positioned(
-            left: _getTooltipX(context, position, targetX),
-            top: _getTooltipY(context, position, targetY),
-            child: FadeTransition(
-              opacity: _fadeAnimation,
-              child: ScaleTransition(
-                scale: _scaleAnimation,
-                alignment: _getScaleAlignment(position),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (position == 'bottom') _buildArrow(backgroundColor, ArrowDirection.up),
-                    
-                    Container(
-                      constraints: const BoxConstraints(maxWidth: 280),
-                      padding: padding,
-                      decoration: BoxDecoration(
-                        color: backgroundColor,
-                        gradient: config['mode'] == 'advanced' && config['gradientWith'] != null && config['gradientTo'] != null
-                            ? LinearGradient(
-                                colors: [
-                                  _parseColor(config['gradientWith']) ?? backgroundColor,
-                                  _parseColor(config['gradientTo']) ?? backgroundColor,
-                                ],
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                              )
-                            : null,
-                        borderRadius: BorderRadius.circular(roundness),
-                        boxShadow: (config['mode'] == 'image' && (config['boxShadow'] == null || config['boxShadow'] == 'none')) 
-                            ? [] // Force cleanup for image mode
-                            : [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.2),
-                                  blurRadius: 12,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                      ),
-                      child: config['mode'] == 'html' 
-                        ? (config['htmlContent'] != null 
-                            ? HtmlWidget(config['htmlContent']) 
-                            : const Text('HTML Content'))
-                        : Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (config['title'] != null)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: Text(
-                                config['title'],
-                                style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold,
-                                  color: textColor,
-                                ),
-                              ),
-                            ),
-
-                          Text(
-                            text,
-                            style: TextStyle(
-                              fontSize: 14,
-                              color: textColor.withOpacity(0.9),
-                              height: 1.4,
-                            ),
+            left: left,
+            top: top,
+            right: right,
+            bottom: bottom,
+            child: FractionalTranslation(
+              translation: translation,
+              child: FadeTransition(
+                opacity: _fadeAnimation,
+                child: ScaleTransition(
+                  scale: _scaleAnimation,
+                  alignment: _getScaleAlignment(position),
+                  child: Transform(
+                    transform: Matrix4.identity()
+                      ..rotateZ((config['rotate'] as num? ?? 0.0) * 3.14159 / 180)
+                      ..scale((config['scale'] as num? ?? 1.0).toDouble()),
+                    alignment: Alignment.center,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (position == 'bottom') _buildArrow(backgroundColor, ArrowDirection.up),
+                        
+                        Container(
+                          // Constraints & Sizing
+                          width: (config['width'] as num?)?.toDouble(),
+                          height: (config['height'] as num?)?.toDouble(),
+                          constraints: (config['width'] == null && config['height'] == null) 
+                              ? const BoxConstraints(maxWidth: 280) 
+                              : null,
+                          padding: padding,
+                          decoration: BoxDecoration(
+                            color: backgroundColor,
+                            borderRadius: BorderRadius.circular(roundness),
+                            boxShadow: (config['mode'] == 'image' && (config['boxShadow'] == null || config['boxShadow'] == 'none')) 
+                                ? [] 
+                                : [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.2),
+                                      blurRadius: 12,
+                                      offset: const Offset(0, 4),
+                                    ),
+                                  ],
+                             // ... Support Gradient if needed ...
                           ),
-
-                          if (config['buttonText'] != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 12),
-                              child: SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  onPressed: () => _handleCTA('primary'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: textColor,
-                                    foregroundColor: backgroundColor,
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    elevation: 0,
-                                  ),
-                                  child: Text(
-                                    config['buttonText'],
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
+                          child: _buildContent(config, textColor, text, backgroundColor, roundness, paddingVal),
+                        ),
+                        
+                        if (position == 'top') _buildArrow(backgroundColor, ArrowDirection.down),
+                      ],
                     ),
-                    
-                    if (position == 'top') _buildArrow(backgroundColor, ArrowDirection.down),
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
 
-          // Target highlight (pulse effect)
-          Positioned(
-            left: targetX - (targetWidth / 2) - 10, // Adjust centering relative to calculated target center
-            top: targetY - (targetHeight / 2) - 10,
-            child: _buildTargetHighlight(targetWidth, targetHeight, targetShape, targetRoundness),
-          ),
+          // Target Highlight
+          if (targetWidth > 0)
+            Positioned(
+               left: targetX - (targetWidth / 2) - 4, // 4px padding
+               top: targetY - (targetHeight / 2) - (position == 'bottom' ? targetHeight : 0) - 4, 
+               // Wait, logic for target Y is tricky because targetY depends on edge. 
+               // Let's re-calculate absolute center for highlight
+               // Actually, let's just use the original renderBox center if possible? 
+               // But we only have adjusted targetX/Y.
+               // Let's simplify:
+               child: IgnorePointer(
+                  child: Transform.translate(
+                    offset: Offset(
+                      position == 'right' ? -targetWidth : position == 'left' ? 0 : -targetWidth/2,
+                      position == 'bottom' ? -targetHeight : position == 'top' ? 0 : -targetHeight/2
+                    ),
+                    child: _buildTargetHighlight(targetWidth, targetHeight, targetShape, targetRoundness),
+                  )
+               ),
+            ),
         ],
       ),
     );
+  }
+
+  Widget _buildContent(Map<String, dynamic> config, Color textColor, String text, Color btnColor, double roundness, double paddingVal) {
+     if (config['mode'] == 'html' && config['htmlContent'] != null) {
+        return HtmlWidget(config['htmlContent']);
+     }
+     
+     if (config['mode'] == 'image' && config['imageUrl'] != null) {
+        return ClipRRect(
+            borderRadius: BorderRadius.circular(roundness > paddingVal ? roundness - paddingVal : 0),
+            child: Image.network(
+               config['imageUrl'],
+               fit: BoxFit.cover,
+               width: (config['width'] as num?)?.toDouble(),
+               height: (config['height'] as num?)?.toDouble(),
+               errorBuilder: (ctx, err, stack) => const Icon(Icons.broken_image, color: Colors.white),
+            )
+        );
+     }
+
+     return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (config['title'] != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text(
+                config['title'],
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: textColor),
+              ),
+            ),
+          Text(
+            text,
+            style: TextStyle(fontSize: 14, color: textColor.withOpacity(0.9), height: 1.4),
+          ),
+          if (config['buttonText'] != null)
+             Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: SizedBox(
+                   width: double.infinity,
+                   child: ElevatedButton(
+                      onPressed: () => _handleCTA('primary'),
+                      style: ElevatedButton.styleFrom(
+                         backgroundColor: textColor,
+                         foregroundColor: btnColor,
+                         padding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                      child: Text(config['buttonText'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                   ),
+                ),
+             ),
+        ],
+     );
+  }
+
+  // HELPER METHODS
+
+  Color? _parseColor(dynamic color) {
+    if (color is Color) return color;
+    if (color is int) return Color(color);
+    if (color is String) {
+      if (color.isEmpty || color == 'transparent') return Colors.transparent;
+      try {
+        var hex = color.replaceAll('#', '');
+        if (hex.length == 6) hex = 'FF$hex';
+        return Color(int.parse('0x$hex'));
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  Alignment _getScaleAlignment(String position) {
+      switch (position) {
+        case 'top': return Alignment.bottomCenter;
+        case 'bottom': return Alignment.topCenter;
+        case 'left': return Alignment.centerRight;
+        case 'right': return Alignment.centerLeft;
+        default: return Alignment.center;
+      }
+  }
+
+  Widget _buildTargetHighlight(double width, double height, BoxShape shape, double roundness) {
+      return Container(
+         width: width + 8,
+         height: height + 8,
+         decoration: BoxDecoration(
+           shape: shape,
+           borderRadius: shape == BoxShape.rectangle ? BorderRadius.circular(roundness) : null,
+           border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
+           boxShadow: [
+             BoxShadow(color: Colors.white.withOpacity(0.3), blurRadius: 8, spreadRadius: 2),
+           ]
+         ),
+      );
   }
 
   Widget _buildArrow(Color color, ArrowDirection direction) {

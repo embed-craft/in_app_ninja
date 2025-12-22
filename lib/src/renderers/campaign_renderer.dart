@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
+import 'dart:io';
 import '../models/campaign.dart';
 import 'nudge_renderers/modal_nudge_renderer.dart';
 import 'nudge_renderers/banner_nudge_renderer.dart';
 import 'nudge_renderers/tooltip_nudge_renderer.dart';
-import 'nudge_renderers/bottom_sheet_nudge_renderer_v2.dart';
+import 'nudge_renderers/bottom_sheet_nudge_renderer.dart';
+import 'native_nudge_renderer.dart';
+
 import 'nudge_renderers/pip_nudge_renderer_v2.dart';
 import 'nudge_renderers/scratch_card_renderer.dart';
 import 'nudge_renderers/story_carousel_renderer.dart';
@@ -42,6 +45,20 @@ class NinjaCampaignRenderer {
           onCTAClick: onCTAClick,
         );
 
+      case 'bottomsheet':
+        // Use native rendering on mobile for perfect layout parity
+        if (Platform.isAndroid || Platform.isIOS) {
+          return NativeNudgeRenderer(
+            campaign: campaign,
+          );
+        }
+        // Fallback to Flutter widgets on other platforms
+        return BottomSheetNudgeRenderer(
+          campaign: campaign,
+          onDismiss: onDismiss,
+          onCTAClick: onCTAClick,
+        );
+
       case 'banner':
       case 'top_banner':
       case 'bottom_banner':
@@ -58,13 +75,7 @@ class NinjaCampaignRenderer {
           onCTAClick: onCTAClick,
         );
 
-      case 'bottom_sheet':
-      case 'bottomsheet':
-        return BottomSheetNudgeRenderer(
-          campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
-        );
+
 
       case 'pip':
         return PIPNudgeRendererV2(
@@ -122,17 +133,23 @@ class NinjaCampaignRenderer {
   static VoidCallback show({
     required Campaign campaign,
     required BuildContext context,
+    OverlayState? overlayState, // Allow explicit overlay state for global key usage
     VoidCallback? onImpression,
     VoidCallback? onDismiss,
     Function(String action, Map<String, dynamic>? data)? onCTAClick,
   }) {
     final type = campaign.config['type']?.toString().toLowerCase() ?? 'modal';
 
-    // For overlay types (modal, bottom sheet, etc.), use dialog
-    if (['modal', 'dialog', 'bottom_sheet', 'bottomsheet'].contains(type)) {
+    // For modal/dialog/bottomsheet types
+    if (['modal', 'dialog', 'bottomsheet'].contains(type)) {
+      final overlayColor = _parseColor(campaign.config['overlay']?['color']);
+      final overlayOpacity = (campaign.config['overlay']?['opacity'] as num?)?.toDouble() ?? 0.5;
+      final barrierColor = overlayColor?.withOpacity(overlayOpacity) ?? Colors.black54;
+
       final future = showDialog(
         context: context,
         barrierDismissible: campaign.config['dismissible'] != false,
+        barrierColor: barrierColor,
         builder: (dialogContext) => render(
           campaign: campaign,
           context: dialogContext,
@@ -145,22 +162,25 @@ class NinjaCampaignRenderer {
         ),
       );
       
-      // Return dismiss function
       return () {
-        // We need to be careful here. Navigator.pop might pop the wrong thing if
-        // the user has navigated. But for now, assuming the dialog is top-most
-        // or we want to close whatever is top.
-        // A safer way would be to check if the dialog is still active.
-        // But showDialog doesn't give us a controller.
-        // We'll use the context passed to showDialog.
         if (Navigator.canPop(context)) {
           Navigator.of(context).pop();
         }
       };
     }
+
     // For floating types, use overlay
     else if (['pip', 'floater', 'floating', 'banner', 'tooltip'].contains(type)) {
-      final overlay = Overlay.of(context);
+      // Use provided state or look up from context. 
+      // Note: If context is from the Overlay widget itself (via GlobalKey), Overlay.of() might fail (looks for ancestor),
+      // so passing overlayState explicitly is safer for auto-rendering.
+      final overlay = overlayState ?? Overlay.of(context);
+      
+      if (overlay == null) {
+        debugPrint('NinjaCampaignRenderer: No Overlay found for context. Cannot show $type campaign.');
+        return () {};
+      }
+
       late OverlayEntry entry;
 
       entry = OverlayEntry(
@@ -189,5 +209,20 @@ class NinjaCampaignRenderer {
       debugPrint('Inline nudge type requires direct widget integration');
       return () {};
     }
+  }
+
+  static Color? _parseColor(dynamic color) {
+    if (color == null) return null;
+    if (color is Color) return color;
+    final colorStr = color.toString();
+    if (colorStr.startsWith('#')) {
+      final hexColor = colorStr.replaceFirst('#', '');
+      if (hexColor.length == 6) {
+        return Color(int.parse('FF$hexColor', radix: 16));
+      } else if (hexColor.length == 8) {
+        return Color(int.parse(hexColor, radix: 16));
+      }
+    }
+    return null;
   }
 }

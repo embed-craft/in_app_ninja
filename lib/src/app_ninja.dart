@@ -8,6 +8,7 @@ import 'models/ninja_region.dart';
 import 'models/ninja_user.dart';
 import 'renderers/campaign_renderer.dart';
 import 'widgets/embed_widget_wrapper.dart'; // Import for type checking
+import 'data/ninja_campaign_repository.dart';
 
 /// AppNinja - Main SDK class for InAppNinja
 ///
@@ -84,17 +85,22 @@ class AppNinja {
 
   // Element tracking
   static Map<String, Map<String, dynamic>> _elementPositions = {};
+  
+  // Navigation key for global context access
+  static GlobalKey<NavigatorState>? _navigatorKey;
 
   /// Initialize the SDK
   ///
   /// [apiKey] - Your InAppNinja API key
   /// [userId] - Optional initial user ID
-  /// [baseUrl] - Optional custom server URL (hidden by default, falls back to Production)
+  /// [baseUrl] - Optional custom server URL
   /// [autoRender] - Enable automatic campaign rendering (default: false)
+  /// [navigatorKey] - Required for auto-rendering modals/sheets without context
   static Future<void> init(String apiKey,
       {String userId = '',
-      String? baseUrl, // Now optional (nullable)
-      bool autoRender = false}) async {
+      String? baseUrl,
+      bool autoRender = false,
+      GlobalKey<NavigatorState>? navigatorKey}) async {
     if (_initialized) {
       debugLog('AppNinja already initialized');
       return;
@@ -102,6 +108,7 @@ class AppNinja {
 
     try {
       _apiKey = apiKey;
+      _navigatorKey = navigatorKey;
       
       // Override default URL only if a specific one is provided
       if (baseUrl != null && baseUrl.isNotEmpty) {
@@ -118,10 +125,16 @@ class AppNinja {
 
       _initialized = true;
       debugLog(
-          'AppNinja initialized with baseUrl: $_baseUrl, autoRender: $autoRender');
+          'AppNinja initialized with baseUrl: $_baseUrl, autoRender: $autoRender, navigatorKey: ${_navigatorKey != null}');
 
-      // Load cached campaigns
-      await _loadCachedCampaigns();
+      // Load cached campaigns via Repository & Listen for updates
+      NinjaCampaignRepository().campaignsStream.listen((list) {
+         _campaignController.add(list);
+      });
+      await NinjaCampaignRepository().loadFromCache();
+      
+      // Legacy cache loader removed
+      // await _loadCachedCampaigns();
 
       // Flush queued events
       unawaited(_flushEventQueue());
@@ -181,18 +194,20 @@ class AppNinja {
       'event_id':
           '${userId}_${eventName}_${DateTime.now().millisecondsSinceEpoch}',
       'timestamp': DateTime.now().toIso8601String(),
-      'user_id': userId,
-      'event': eventName,
-      'properties': properties,
+      'userId': userId, // Changed to camelCase
+      'action': eventName, // Changed to action (preferred by backend)
+      'metadata': properties, // Changed to metadata
       'sdk_version': 'in_app_ninja_flutter_1.0.0',
       'page': _currentPage,
     };
 
     try {
-      final response = await _post('/v1/track', event);
+      debugLog('📤 Sending track event: $eventName');
+      final response = await _post('/api/v1/nudge/track', event); // Updated Endpoint
 
       // ⭐ REAL-TIME INTEGRATION: Process matched campaigns from track response
       if (response.statusCode == 200) {
+        debugLog('✅ Track success: $eventName (200 OK)');
         try {
           final body = jsonDecode(response.body);
 
@@ -224,7 +239,7 @@ class AppNinja {
 
       _eventListener?.call(eventName, properties);
     } catch (e) {
-      debugLog('Track failed, queuing: $e');
+      debugLog('❌ Track failed, queuing: $e');
       await _queueEvent({'type': 'track', 'payload': event});
     }
   }
@@ -244,13 +259,13 @@ class AppNinja {
     }
 
     final payload = {
-      'user_id': userId ?? 'anonymous',
+      'userId': userId ?? 'anonymous', // CamelCase
       'traits': attributes,
       'timestamp': DateTime.now().toIso8601String(),
     };
 
     try {
-      await _post('/v1/identify', payload);
+      await _post('/api/v1/nudge/identify', payload); // Updated Endpoint
     } catch (e) {
       debugLog('Identify failed, queuing: $e');
       await _queueEvent({'type': 'identify', 'payload': payload});
@@ -266,68 +281,15 @@ class AppNinja {
   static Future<List<Campaign>> fetchCampaigns(
       {String? userId, bool forceRefresh = false}) async {
     _ensureInitialized();
-
     final uid = userId ?? _prefs?.getString(_prefsKeyUserId) ?? 'anonymous';
-    final url = '$_baseUrl/v1/campaigns?user_id=${Uri.encodeComponent(uid)}';
+    final screen = _currentPage ?? 'all';
 
-    int attempts = 0;
-    const maxAttempts = 3;
-
-    while (attempts < maxAttempts) {
-      try {
-        attempts++;
-        final response = await http
-            .get(
-              Uri.parse(url),
-              headers: await _getHeaders(),
-            )
-            .timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200) {
-          final body = jsonDecode(response.body);
-          List<Campaign> campaigns = [];
-
-          if (body is Map && body['campaigns'] is List) {
-            campaigns = (body['campaigns'] as List)
-                .map((c) => Campaign.fromJson(c as Map<String, dynamic>))
-                .toList();
-          } else if (body is List) {
-            campaigns = body
-                .map((c) => Campaign.fromJson(c as Map<String, dynamic>))
-                .toList();
-          }
-
-          // Cache campaigns
-          await _prefs?.setString(_prefsKeyCampaigns,
-              jsonEncode(campaigns.map((c) => c.toJson()).toList()));
-          _campaignController.add(campaigns);
-          debugLog('✅ Fetched ${campaigns.length} campaigns from server');
-          return campaigns;
-        } else {
-          debugLog(
-              'fetchCampaigns failed with status ${response.statusCode} (Attempt $attempts/$maxAttempts)');
-          if (attempts == maxAttempts) {
-            throw Exception(
-                'fetchCampaigns failed with status ${response.statusCode}');
-          }
-        }
-      } catch (e) {
-        debugLog(
-            'fetchCampaigns error: $e (Attempt $attempts/$maxAttempts)');
-        
-        if (attempts == maxAttempts) {
-          if (forceRefresh) {
-            rethrow;
-          }
-          debugLog('Returning cached campaigns due to network failure');
-          return await _loadCachedCampaigns();
-        }
-        
-        // Exponential backoff: 1s, 2s, 4s
-        await Future.delayed(Duration(seconds: 1 * attempts));
-      }
-    }
-    return [];
+    return await NinjaCampaignRepository().fetchAndSync(
+      baseUrl: _baseUrl,
+      userId: uid,
+      screenName: screen,
+      headers: await _getHeaders(),
+    );
   }
 
   /// Clear all cached campaigns and force fresh fetch on next request
@@ -534,7 +496,7 @@ class AppNinja {
 
     final payload = {
       'external_id': externalId,
-      'user_id':
+      'userId': // CamelCase
           _prefs?.getString(_prefsKeyUserId) ?? externalId ?? 'anonymous',
       'traits': _userProperties,
       'timestamp': DateTime.now().toIso8601String(),
@@ -620,7 +582,7 @@ class AppNinja {
     _ensureInitialized();
 
     try {
-      await _post('/v1/leads', {'leads': leads});
+      await _post('/api/v1/nudge/leads', {'leads': leads});
       debugLog('Added ${leads.length} referral leads');
     } catch (e) {
       debugLog('addLeads failed: $e');
@@ -1071,9 +1033,9 @@ class AppNinja {
         final payload = event['payload'] as Map<String, dynamic>;
 
         if (type == 'track') {
-          await _post('/v1/track', payload);
+          await _post('/api/v1/nudge/track', payload);
         } else if (type == 'identify') {
-          await _post('/v1/identify', payload);
+          await _post('/api/v1/nudge/identify', payload);
         }
       } catch (e) {
         debugLog('Failed to flush event: $e');
@@ -1104,9 +1066,9 @@ class AppNinja {
   }
 
   static void debugLog(String message) {
-    if (_debugMode) {
+    // if (_debugMode) { // 🔥 FORCE LOGS
       debugPrint('InAppNinja: $message');
-    }
+    // }
   }
 
   /// Get current app context (for widget detection)
@@ -1201,89 +1163,39 @@ class AppNinja {
   /// Setup auto-rendering system
   ///
   /// Listens to campaign stream and automatically shows campaigns when they arrive
-  static void _setupAutoRendering() {
-    debugLog('🎯 Setting up auto-rendering system');
-
-    // Cancel existing subscription if any
-    _autoRenderSubscription?.cancel();
-
-    // Listen to campaigns and auto-show them
-    _autoRenderSubscription = onCampaigns.listen((campaigns) {
-      if (!_autoRenderEnabled || _globalContext == null) {
-        debugLog('⚠️ Auto-render disabled or no context available');
-        return;
-      }
-
-      debugLog('📦 Auto-render received ${campaigns.length} campaigns');
-
-      // Priority order: modal > bottom_sheet > banner > tooltip > pip
-      Campaign? campaignToShow;
-
-      // Check for high-priority campaigns first
-      for (final campaign in campaigns) {
-        final type = campaign.type.toLowerCase();
-
-        if (type == 'modal' || type == 'dialog') {
-          campaignToShow = campaign;
-          break; // Modal has highest priority
-        } else if (type == 'bottom_sheet' || type == 'bottomsheet') {
-          campaignToShow = campaign;
-          break; // Bottom sheet is second priority
-        } else if (type == 'banner') {
-          campaignToShow ??= campaign; // Banner if no modal/sheet
-        } else if (type == 'pip' || type == 'floater') {
-          campaignToShow ??= campaign; // PIP as fallback
-        }
-      }
-
-      // Auto-show the selected campaign
-      if (campaignToShow != null) {
-        _autoShowCampaign(campaignToShow);
-      }
-    });
-
-    // Auto-fetch campaigns on startup (after init completes)
-    Future.delayed(const Duration(milliseconds: 500), () {
-      autoFetchCampaigns();
-    });
-  }
-
-  static VoidCallback? _dismissCurrentCampaign;
+  static final Map<String, VoidCallback> _activeCampaignDismissals = {};
 
   /// Auto-show campaign (universal renderer for all types)
   static void _autoShowCampaign(Campaign campaign) {
-    if (_globalContext == null) {
-      debugLog('❌ Cannot auto-show campaign: No global context');
+    // Resolve context: Prefer Navigator's OVERLAY context (child of Navigator) 
+    // This ensures Navigator.of(context) finds the navigator itself, instead of looking above it.
+    final context = _navigatorKey?.currentState?.overlay?.context ?? 
+                   _navigatorKey?.currentContext ?? 
+                   _globalContext;
+
+    if (context == null) {
+      debugLog('❌ Cannot auto-show campaign: No valid context (Global or Navigator)');
       return;
     }
 
     // Prevent duplicates - check if this campaign was already shown in this session
-    if (_shownCampaignsThisSession.contains(campaign.id)) {
+    // EXCEPTION: If it is currently active, we might want to refresh it? 
+    // For now, let's treat "Active" as "Shown".
+    if (_shownCampaignsThisSession.contains(campaign.id) && !_activeCampaignDismissals.containsKey(campaign.id)) {
       debugLog(
-          '⚠️ Campaign ${campaign.id} already shown this session, skipping');
+          'ℹ️ Campaign ${campaign.id} already shown this session, skipping auto-render');
       return;
-    }
-
-    // Frequency capping: Don't show campaigns too frequently (30 second cooldown)
-    if (_lastCampaignShownTime != null) {
-      final timeSinceLastShow =
-          DateTime.now().difference(_lastCampaignShownTime!);
-      if (timeSinceLastShow.inSeconds < 30) {
-        debugLog(
-            '⏱️ Cooldown active, skipping campaign (${30 - timeSinceLastShow.inSeconds}s remaining)');
-        return;
-      }
     }
 
     final campaignType = campaign.type.toLowerCase();
     debugLog(
         '🚀 Auto-showing $campaignType campaign: ${campaign.title} (${campaign.id})');
 
-    // Dismiss any currently active campaign
-    if (_dismissCurrentCampaign != null) {
-      debugLog('⚠️ Dismissing previous campaign before showing new one');
-      _dismissCurrentCampaign?.call();
-      _dismissCurrentCampaign = null;
+    // Dismiss this specific campaign if already active (Refresh)
+    if (_activeCampaignDismissals.containsKey(campaign.id)) {
+      debugLog('🔄 Refreshing existing campaign ${campaign.id}');
+      _activeCampaignDismissals[campaign.id]?.call();
+      _activeCampaignDismissals.remove(campaign.id);
     }
 
     // Mark campaign as shown in this session
@@ -1293,9 +1205,10 @@ class AppNinja {
 
     try {
       // Use NinjaCampaignRenderer to show the campaign
-      _dismissCurrentCampaign = NinjaCampaignRenderer.show(
+      final dismissCallback = NinjaCampaignRenderer.show(
         campaign: campaign,
-        context: _globalContext!,
+        context: context,
+        overlayState: _navigatorKey?.currentState?.overlay, // Pass direct overlay state
         onImpression: () {
           debugLog('👁️ Auto-tracked impression: ${campaign.id}');
           track('campaign_viewed', properties: {
@@ -1312,10 +1225,13 @@ class AppNinja {
             'campaign_id': campaign.id,
             'campaign_name': campaign.title,
           });
-          // Clear current PIP reference but keep session tracking
-          _lastShownPipId = null;
-          _dismissCurrentCampaign = null;
-          // Campaign remains in _shownCampaignsThisSession to prevent re-showing
+          
+          // Clean up dismissal registry
+          _activeCampaignDismissals.remove(campaign.id);
+          
+          if (_lastShownPipId == campaign.id) {
+             _lastShownPipId = null;
+          }
         },
         onCTAClick: (action, data) {
           debugLog('🎯 Auto-rendered CTA clicked: $action');
@@ -1327,14 +1243,55 @@ class AppNinja {
           });
         },
       );
+      
+      if (dismissCallback != null) {
+         _activeCampaignDismissals[campaign.id] = dismissCallback;
+      }
 
       debugLog('✅ Campaign auto-rendered successfully: ${campaign.title}');
     } catch (e) {
       debugLog('❌ Auto-show campaign failed: $e');
       debugPrint('Auto-render error stack: ${StackTrace.current}');
-      _lastShownPipId = null; // Clear on error
-      _dismissCurrentCampaign = null;
     }
+  }
+
+  /// Setup auto-rendering system
+  ///
+  /// Listens to campaign stream and automatically shows campaigns when they arrive
+  static void _setupAutoRendering() {
+    debugLog('🎯 Setting up auto-rendering system');
+
+    // Cancel existing subscription if any
+    _autoRenderSubscription?.cancel();
+
+    // Listen to campaigns and auto-show them
+    _autoRenderSubscription = onCampaigns.listen((campaigns) {
+      // Use navigator context if available, fallback to global
+      final hasContext = _navigatorKey?.currentContext != null || _globalContext != null;
+      
+      if (!_autoRenderEnabled || !hasContext) {
+        debugLog('⚠️ Auto-render disabled or no context available');
+        return;
+      }
+
+      debugLog('📦 Auto-render received ${campaigns.length} campaigns');
+
+      // 🔥 SUPPORT MULTIPLE SIMULTANEOUS CAMPAIGNS
+      // Instead of picking one, we iterate and show ALL eligible ones.
+      // We rely on _autoShowCampaign to handle duplicates/refresh.
+      
+      for (final campaign in campaigns) {
+         debugLog('🔍 Processing campaign for auto-render: ${campaign.id} - ${campaign.title}');
+         // Optional: Add logic here to prevent Modal overlap if necessary.
+         // For now, we trust the user's setup (don't trigger 2 modals at once).
+         _autoShowCampaign(campaign);
+      }
+    });
+
+    // Auto-fetch campaigns on startup (after init completes)
+    Future.delayed(const Duration(milliseconds: 500), () {
+      autoFetchCampaigns();
+    });
   }
 
   /// Dispose resources

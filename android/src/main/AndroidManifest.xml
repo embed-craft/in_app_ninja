@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.embeddedcraft.in_app_ninja">
+    
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>
