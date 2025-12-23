@@ -18,19 +18,19 @@ class NinjaButtonLayer extends StatelessWidget {
     final text = content['label']?.toString() ?? content['text']?.toString() ?? 'Button';
     
     // 2. Core Styles
-    final fontSize = NinjaLayerUtils.parseDouble(content['fontSize']) ?? 14.0;
+    final fontSize = NinjaLayerUtils.parseDouble(content['fontSize'], context) ?? 14.0;
     final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']);
     final themeColor = NinjaLayerUtils.parseColor(content['themeColor']) ?? Colors.blue; 
     final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.white;
     
     // Decoration
     final bgColor = NinjaLayerUtils.parseColor(style['backgroundColor']) ?? themeColor;
-    final radius = NinjaLayerUtils.parseDouble(style['borderRadius']) ?? 50.0;
-    final borderWidth = NinjaLayerUtils.parseDouble(style['borderWidth']) ?? 0.0;
+    final radius = NinjaLayerUtils.parseDouble(style['borderRadius'], context) ?? 50.0;
+    final borderWidth = NinjaLayerUtils.parseDouble(style['borderWidth'], context) ?? 0.0;
     final borderColor = NinjaLayerUtils.parseColor(style['borderColor']) ?? Colors.transparent;
 
     // Common
-    final padding = NinjaLayerUtils.parsePadding(style['padding']); 
+    final padding = NinjaLayerUtils.parsePadding(style['padding'], context); 
 
     return LayoutBuilder(
       builder: (context, constraints) {

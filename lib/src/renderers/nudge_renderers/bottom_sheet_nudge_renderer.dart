@@ -149,9 +149,24 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
           alignment: Alignment.bottomCenter,
           child: SlideTransition(
             position: _slideAnimation,
-            child: Material(
-              color: Colors.transparent,
-              child: Container(
+            child: GestureDetector(
+              onVerticalDragUpdate: (details) {
+                  if (responsiveConfig['swipeToDismiss'] == true) {
+                      _controller.value -= details.primaryDelta! / (height ?? MediaQuery.of(context).size.height);
+                  }
+              },
+              onVerticalDragEnd: (details) {
+                  if (responsiveConfig['swipeToDismiss'] == true) {
+                      if (details.primaryVelocity! > 300 || _controller.value < 0.6) {
+                          _handleDismiss();
+                      } else {
+                          _controller.forward();
+                      }
+                  }
+              },
+              child: Material(
+                color: Colors.transparent,
+                child: Container(
                 width: width,
                 height: height, // null = auto
                  constraints: BoxConstraints(
@@ -164,12 +179,6 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
                      topLeft: Radius.circular(topLeftRadius),
                      topRight: Radius.circular(topRightRadius),
                    ),
-                   image: backgroundImageUrl != null && backgroundImageUrl.isNotEmpty
-                      ? DecorationImage(
-                          image: NetworkImage(backgroundImageUrl),
-                          fit: NinjaLayerUtils.parseBoxFit(backgroundSize),
-                        )
-                      : null,
                    boxShadow: const [
                       BoxShadow(
                         color: Colors.black12,
@@ -178,29 +187,46 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
                       )
                    ]
                  ),
-                 child: Stack(
-                   children: [
-                     // Content (Internal Scroll + Absolute Layers)
-                     _buildContent(responsiveConfig),
-                     
-                     // Close Button (if enabled)
-                     if (responsiveConfig['showCloseButton'] == true)
-                        Positioned(
-                          top: 16, // Match Dashboard Top Offset
-                          right: 12,
-                          child: GestureDetector(
-                            onTap: _handleDismiss,
-                            child: Container(
-                              padding: const EdgeInsets.all(4),
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black12, // subtle bg
+                 child: ClipRRect(
+                   borderRadius: BorderRadius.only(
+                     topLeft: Radius.circular(topLeftRadius),
+                     topRight: Radius.circular(topRightRadius),
+                   ),
+                   child: Container(
+                     decoration: BoxDecoration(
+                        image: backgroundImageUrl != null && backgroundImageUrl.isNotEmpty
+                          ? DecorationImage(
+                              image: NetworkImage(backgroundImageUrl),
+                              fit: NinjaLayerUtils.parseBoxFit(backgroundSize),
+                              alignment: Alignment.bottomCenter, // Fix Background Alignment
+                            )
+                          : null,
+                     ),
+                     child: Stack(
+                       children: [
+                         // Content (Internal Scroll + Absolute Layers)
+                         _buildContent(responsiveConfig),
+                         
+                         // Close Button (if enabled)
+                         if (responsiveConfig['showCloseButton'] == true)
+                            Positioned(
+                              top: 16, // Match Dashboard Top Offset
+                              right: 12,
+                              child: GestureDetector(
+                                onTap: _handleDismiss,
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: const BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.black12, // subtle bg
+                                  ),
+                                  child: const Icon(Icons.close, size: 20, color: Colors.black54),
+                                ),
                               ),
-                              child: const Icon(Icons.close, size: 20, color: Colors.black54),
                             ),
-                          ),
-                        )
-                   ],
+                       ],
+                     ),
+                   ),
                  ),
               ),
             ),
@@ -250,10 +276,7 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
     Widget flowStructure = Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: flowChildren.map((child) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: child,
-        )).toList(),
+        children: flowChildren,
     );
 
     contentStack = Stack(

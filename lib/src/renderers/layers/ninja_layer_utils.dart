@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 
 class NinjaLayerUtils {
   // Reference design width (Precision Tuned)
-  // Adjusted to 290.0 based on feedback "Button 10px above".
-  // This forces vertical offsets to scale aggressively (1.4x), clearing the aspect-ratio zoomed image.
-  static const double kDesignWidth = 290.0;
+  // Adjusted to 375.0 to match the standard mobile breakpoint used in the Dashboard and Native Android SDK.
+  static const double kDesignWidth = 375.0;
+  static const double kDesignHeight = 813.0; // iPhone 14 Pro normalized height (852 / (393/375))
 
-  static double? parseDouble(dynamic value, [BuildContext? context]) {
+  static double? parseDouble(dynamic value, [BuildContext? context, bool isVertical = false]) {
     if (value == null) return null;
     double? result;
     
@@ -23,18 +23,22 @@ class NinjaLayerUtils {
     // Dashboard (375px) vs Device (e.g. 400px). 
     // Images scale with width (Aspect Ratio). Fixed coords MUST scale too used to prevent overlap.
     if (context != null && result != null) {
-       double screenWidth = MediaQuery.of(context).size.width;
-       // Limit scaling to reasonable bounds (e.g. Tablet shouldn't explode buttons)
-       // But for mobile parity, linear scaling is desired.
-       return result * (screenWidth / kDesignWidth);
+       final size = MediaQuery.of(context).size;
+       if (isVertical) {
+          // Fix 16: Vertical Positioning scales with HEIGHT to match 'cover' background behavior
+          return result * (size.height / kDesignHeight);
+       } else {
+          // Horizontal / Size uses WIDTH scaling
+          return result * (size.width / kDesignWidth);
+       }
     }
     
     return result;
   }
 
-  static double? parseSize(dynamic value, [BuildContext? context]) {
+  static double? parseSize(dynamic value, [BuildContext? context, bool isVertical = false]) {
     if (value == 'auto' || value == null) return null;
-    return parseDouble(value, context);
+    return parseDouble(value, context, isVertical);
   }
 
   /// Solves the required container height to fit all layers.
@@ -50,7 +54,7 @@ class NinjaLayerUtils {
       // For now focusing on absolute layers which caused the collapse.
       if (style['position'] != 'absolute') continue;
 
-      final top = parseDouble(style['top']) ?? 0;
+      final top = parseDouble(style['top']) ?? 0; // Context missing in static calc, acceptable?
       final hVal = style['height'];
 
       if (hVal is String && hVal.trim().endsWith('%')) {
@@ -107,7 +111,7 @@ class NinjaLayerUtils {
         }
      }
      
-     return parseSize(value);
+     return parseSize(value, context, isVertical);
   }
 
   static Color? parseColor(dynamic value) {
@@ -142,16 +146,30 @@ class NinjaLayerUtils {
     // 1. Explicit Map: {top: 10, right: 0...}
     if (value is Map) {
       return EdgeInsets.only(
-        top: parseDouble(value['top'], context) ?? 0,
-        right: parseDouble(value['right'], context) ?? 0,
-        bottom: parseDouble(value['bottom'], context) ?? 0,
-        left: parseDouble(value['left'], context) ?? 0,
+        top: parseDouble(value['top'], context, true) ?? 0,
+        right: parseDouble(value['right'], context, false) ?? 0,
+        bottom: parseDouble(value['bottom'], context, true) ?? 0,
+        left: parseDouble(value['left'], context, false) ?? 0,
       );
     }
     
     // 2. Shorthand: 20 or "20px" (Uniform Padding)
     if (value != null) {
-       final uniform = parseDouble(value, context);
+       // Check for 2-value syntax "10px 20px" (Vertical Horizontal)
+       if (value is String && value.contains(' ')) {
+          final parts = value.trim().split(RegExp(r'\s+'));
+          if (parts.length == 2) {
+             final v = parseDouble(parts[0], context, true) ?? 0;
+             final h = parseDouble(parts[1], context, false) ?? 0;
+             return EdgeInsets.symmetric(vertical: v, horizontal: h);
+          }
+       }
+
+       // Uniform
+       // Note: Uniform padding technically applies vertical scaling to top/bottom and horizontal to left/right?
+       // BUT standard CSS 'padding: 10px' implies a square spacing.
+       // Only applying width-scaling (standard) is safer for uniform scaling to preserve element shape.
+       final uniform = parseDouble(value, context); // Default isVertical=false
        if (uniform != null && uniform > 0) {
           return EdgeInsets.all(uniform);
        }

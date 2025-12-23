@@ -16,7 +16,7 @@ class NinjaTextLayer extends StatelessWidget {
     final text = content['text']?.toString() ?? 'Text';
 
     // 2. Typography
-    final fontSize = NinjaLayerUtils.parseDouble(content['fontSize']) ?? 16.0;
+    final fontSize = NinjaLayerUtils.parseDouble(content['fontSize'], context) ?? 16.0;
     final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']);
     final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.black;
     final textAlignStr = content['textAlign']?.toString() ?? 'left';
@@ -34,8 +34,8 @@ class NinjaTextLayer extends StatelessWidget {
 
     // Background/Border (Common styles often applied to text too, e.g. "Labels")
     final bgColor = NinjaLayerUtils.parseColor(style['backgroundColor']); // Optional
-    final padding = NinjaLayerUtils.parsePadding(style['padding']);
-    final radius = NinjaLayerUtils.parseDouble(style['borderRadius']) ?? 0;
+    final padding = NinjaLayerUtils.parsePadding(style['padding'], context);
+    final radius = NinjaLayerUtils.parseDouble(style['borderRadius'], context) ?? 0;
     
     return Container(
       width: width,

@@ -67,7 +67,7 @@ class NinjaLayerBuilder {
     final margin = NinjaLayerUtils.parsePadding(style?['margin'], context);
     
     // Relative Positioning (Visual Offset without Flow Impact)
-    final top = NinjaLayerUtils.parseDouble(style?['top'], context) ?? 0;
+    final top = NinjaLayerUtils.parseDouble(style?['top'], context, true) ?? 0;
     final left = NinjaLayerUtils.parseDouble(style?['left'], context) ?? 0;
 
     Widget result = content;
@@ -75,6 +75,13 @@ class NinjaLayerBuilder {
     // Apply Margins first (Flow Impact)
     if (margin != null) {
        result = Padding(padding: margin, child: result);
+    } else {
+       // Smart Default: If no margin set, apply bottom spacing (Dashboard Parity)
+       // This replaces the old "Forced Padding" loop in the renderer
+       result = Padding(
+         padding: EdgeInsets.only(bottom: NinjaLayerUtils.parseDouble(10, context, true) ?? 10.0), 
+         child: result
+       );
     }
 
     // Apply Relative Position (Visual Shift)
@@ -89,8 +96,8 @@ class NinjaLayerBuilder {
      final style = layer['style'] as Map<String, dynamic>?;
      if (style == null) return false;
      
-     // Explicit Absolute
-     if (style['position'] == 'absolute') return true;
+     // Explicit Absolute or Fixed
+     if (style['position'] == 'absolute' || style['position'] == 'fixed') return true;
      
      // STRICT PARITY: Dashboard defaults to 'relative' (Flow + Offset).
      // We previously forced absolute if 'top/left' existed, which broke parity.
@@ -103,10 +110,10 @@ class NinjaLayerBuilder {
     final style = layer['style'] as Map<String, dynamic>? ?? {};
     
     // Parse Position
-    final top = NinjaLayerUtils.parseDouble(style['top'], context);
-    final left = NinjaLayerUtils.parseDouble(style['left'], context);
-    final right = NinjaLayerUtils.parseDouble(style['right'], context);
-    final bottom = NinjaLayerUtils.parseDouble(style['bottom'], context);
+    final top = NinjaLayerUtils.parseDouble(style['top'], context, true);
+    final left = NinjaLayerUtils.parseDouble(style['left'], context); // false
+    final right = NinjaLayerUtils.parseDouble(style['right'], context); // false
+    final bottom = NinjaLayerUtils.parseDouble(style['bottom'], context, true);
 
     // Note: Margin is ignored for absolute positioning (Standard CSS behavior).
     // Dashboard 'PositionEditor' only edits Top/Left, so Margin is likely legacy or irrelevant here.
