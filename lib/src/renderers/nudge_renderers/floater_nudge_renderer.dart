@@ -1156,20 +1156,40 @@ class _FloaterNudgeRendererState extends State<FloaterNudgeRenderer> with Single
       case 'open_link':
       case 'openLink':
       case 'deeplink':
-        // Open URL in browser
+        // Open URL in browser or app
         final url = data?['url'] as String?;
         if (url != null && url.isNotEmpty) {
           debugPrint('InAppNinja: 🔗 Opening URL: $url');
           try {
             final uri = Uri.parse(url);
-            if (await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-              debugPrint('InAppNinja: ✅ URL launched successfully');
+            
+            // For custom app schemes (non-http/https), skip canLaunchUrl check
+            // Android 11+ package visibility restrictions cause canLaunchUrl to return false
+            final isWebUrl = uri.scheme == 'http' || uri.scheme == 'https';
+            
+            if (isWebUrl) {
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+                debugPrint('InAppNinja: ✅ URL launched successfully');
+              } else {
+                debugPrint('InAppNinja: ❌ Cannot launch URL: $url');
+              }
             } else {
-              debugPrint('InAppNinja: ❌ Cannot launch URL: $url');
+              // For app deeplinks, try to launch directly
+              debugPrint('InAppNinja: 📲 Attempting app deeplink: ${uri.scheme}://...');
+              try {
+                final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+                if (launched) {
+                  debugPrint('InAppNinja: ✅ Deeplink launched successfully');
+                } else {
+                  debugPrint('InAppNinja: ❌ Failed to launch deeplink (app may not be installed)');
+                }
+              } catch (e) {
+                debugPrint('InAppNinja: ❌ Deeplink error: $e');
+              }
             }
           } catch (e) {
-            debugPrint('InAppNinja: ❌ Error launching URL: $e');
+            debugPrint('InAppNinja: ❌ Error parsing/launching URL: $e');
           }
           widget.onCTAClick?.call(action, {'url': url, ...?data});
         }

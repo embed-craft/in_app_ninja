@@ -2,4 +2,23 @@
     package="com.embeddedcraft.in_app_ninja">
     
     <uses-permission android:name="android.permission.INTERNET" />
+    
+    <!-- Android 11+ Package Visibility: Required for url_launcher to check/launch URLs and deeplinks -->
+    <queries>
+        <!-- Allow launching any http/https URL -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="http" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+        <!-- Allow launching custom app deeplinks (any scheme) -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="*" />
+        </intent>
+    </queries>
 </manifest>

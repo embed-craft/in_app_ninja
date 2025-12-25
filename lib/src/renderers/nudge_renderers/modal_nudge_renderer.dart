@@ -72,20 +72,42 @@ class _ModalNudgeRendererState extends State<ModalNudgeRenderer> with SingleTick
       case 'open_link':
       case 'openLink':
       case 'deeplink':  // ✅ Dashboard uses 'deeplink' for Open Link action
-        // Open URL in browser
+        // Open URL in browser or app
         final url = data?['url'] as String?;
         if (url != null && url.isNotEmpty) {
           debugPrint('InAppNinja: 🔗 Opening URL: $url');
           try {
             final uri = Uri.parse(url);
-            if (await canLaunchUrl(uri)) {
-              await launchUrl(uri, mode: LaunchMode.externalApplication);
-              debugPrint('InAppNinja: ✅ URL launched successfully');
+            
+            // For custom app schemes (non-http/https), skip canLaunchUrl check
+            // Android 11+ package visibility restrictions cause canLaunchUrl to return false
+            // even when the target app is installed
+            final isWebUrl = uri.scheme == 'http' || uri.scheme == 'https';
+            
+            if (isWebUrl) {
+              // For web URLs, check first then launch
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+                debugPrint('InAppNinja: ✅ URL launched successfully');
+              } else {
+                debugPrint('InAppNinja: ❌ Cannot launch URL: $url');
+              }
             } else {
-              debugPrint('InAppNinja: ❌ Cannot launch URL: $url');
+              // For app deeplinks (custom schemes), try to launch directly
+              debugPrint('InAppNinja: 📲 Attempting app deeplink: ${uri.scheme}://...');
+              try {
+                final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+                if (launched) {
+                  debugPrint('InAppNinja: ✅ Deeplink launched successfully');
+                } else {
+                  debugPrint('InAppNinja: ❌ Failed to launch deeplink (app may not be installed)');
+                }
+              } catch (e) {
+                debugPrint('InAppNinja: ❌ Deeplink error (app not installed?): $e');
+              }
             }
           } catch (e) {
-            debugPrint('InAppNinja: ❌ Error launching URL: $e');
+            debugPrint('InAppNinja: ❌ Error parsing/launching URL: $e');
           }
           // Auto-dismiss if configured
           if (data?['autoDismiss'] == true) {

@@ -108,6 +108,9 @@ class AppNinja {
 
     try {
       _apiKey = apiKey;
+      if (navigatorKey != null) {
+        AppNinja.navigatorKey = navigatorKey;
+      }
       _navigatorKey = navigatorKey;
       
       // Override default URL only if a specific one is provided

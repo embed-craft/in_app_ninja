@@ -119,7 +119,23 @@ class CaptureManager {
       final navContext = AppNinja.navigatorKey.currentContext ?? context;
 
       if (navContext.mounted) {
-         _showNameDialog(navContext, imageBytes, elements);
+         // Check if Navigator calls are safe
+         if (Navigator.maybeOf(navContext) != null) {
+            _showNameDialog(navContext, imageBytes, elements);
+         } else {
+            debugPrint('❌ Capture Error: Context found, but NO Navigator available.');
+            // Try to warn using ScaffoldMessenger if possible
+            try {
+              ScaffoldMessenger.of(navContext).showSnackBar(
+                const SnackBar(
+                  content: Text('⚠️ Config Error: No Navigator found! Set AppNinja.navigatorKey in MaterialApp.'),
+                  backgroundColor: Colors.orange,
+                  duration: Duration(seconds: 5),
+                ),
+              );
+            } catch (_) {}
+            showCaptureUi.value = true;
+         }
       } else {
          debugPrint('❌ No valid context found for Dialog');
          showCaptureUi.value = true;
@@ -129,9 +145,11 @@ class CaptureManager {
       debugPrint('❌ Capture Error: $e');
       final navContext = AppNinja.navigatorKey.currentContext ?? context;
       if (navContext.mounted) {
-        ScaffoldMessenger.of(navContext).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
+        try {
+          ScaffoldMessenger.of(navContext).showSnackBar(
+            SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+          );
+        } catch (_) {}
       }
       showCaptureUi.value = true;
     }
