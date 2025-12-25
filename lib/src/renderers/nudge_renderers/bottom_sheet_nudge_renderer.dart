@@ -3,7 +3,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
-import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/campaign.dart';
 import '../layers/ninja_layer_builder.dart';
 import '../layers/ninja_layer_utils.dart';
@@ -62,11 +62,57 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
     widget.onDismiss?.call();
   }
 
-  void _handleAction(String action, [Map<String, dynamic>? data]) {
-    if (action == 'dismiss') {
-      _handleDismiss();
-    } else {
-      widget.onCTAClick?.call(action, data);
+  Future<void> _handleAction(String action, [Map<String, dynamic>? data]) async {
+    debugPrint('InAppNinja: 🎯 BottomSheet Action triggered: $action, data: $data');
+    
+    switch (action) {
+      case 'dismiss':
+      case 'close':
+        _handleDismiss();
+        break;
+      case 'open_link':
+      case 'openLink':
+      case 'deeplink':
+        // Open URL in browser
+        final url = data?['url'] as String?;
+        if (url != null && url.isNotEmpty) {
+          debugPrint('InAppNinja: 🔗 Opening URL: $url');
+          try {
+            final uri = Uri.parse(url);
+            if (await canLaunchUrl(uri)) {
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+              debugPrint('InAppNinja: ✅ URL launched successfully');
+            } else {
+              debugPrint('InAppNinja: ❌ Cannot launch URL: $url');
+            }
+          } catch (e) {
+            debugPrint('InAppNinja: ❌ Error launching URL: $e');
+          }
+          widget.onCTAClick?.call(action, {'url': url, ...?data});
+        }
+        break;
+      case 'navigate':
+        // Navigate to a screen/route
+        final route = data?['route'] as String? ?? data?['screen'] as String?;
+        debugPrint('InAppNinja: 🧭 Navigate to: $route');
+        widget.onCTAClick?.call(action, {'route': route, ...?data});
+        break;
+      case 'custom':
+        // Custom action - pass to callback
+        debugPrint('InAppNinja: ⚙️ Custom action');
+        widget.onCTAClick?.call(action, data);
+        break;
+      case 'submit':
+        // Form submit
+        widget.onCTAClick?.call(action, data);
+        break;
+      case 'none':
+      case 'no_action':
+        // No action - do nothing
+        break;
+      default:
+        // Pass through any other action
+        widget.onCTAClick?.call(action, data);
     }
   }
 
@@ -126,7 +172,13 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       children: [
         // Backdrop
         GestureDetector(
-          onTap: (responsiveConfig['overlay']?['dismissOnClick'] ?? true) ? _handleDismiss : null,
+          behavior: HitTestBehavior.opaque, // Ensure clicks are caught even if transparent
+          onTap: () {
+             debugPrint('Backdrop Tapped. dismissOnClick: ${responsiveConfig['overlay']?['dismissOnClick']}');
+             if (responsiveConfig['overlay']?['dismissOnClick'] ?? true) {
+               _handleDismiss();
+             }
+          },
           child: FadeTransition(
             opacity: _fadeAnimation,
             child: Container(
@@ -150,6 +202,8 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
           child: SlideTransition(
             position: _slideAnimation,
             child: GestureDetector(
+              behavior: HitTestBehavior.translucent, // Catch swipes on empty areas
+              onVerticalDragStart: (_) => debugPrint('Swipe Started. Enabled: ${responsiveConfig['swipeToDismiss']}'),
               onVerticalDragUpdate: (details) {
                   if (responsiveConfig['swipeToDismiss'] == true) {
                       _controller.value -= details.primaryDelta! / (height ?? MediaQuery.of(context).size.height);
@@ -157,6 +211,7 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
               },
               onVerticalDragEnd: (details) {
                   if (responsiveConfig['swipeToDismiss'] == true) {
+                      debugPrint('Swipe End. Velocity: ${details.primaryVelocity}, Value: ${_controller.value}');
                       if (details.primaryVelocity! > 300 || _controller.value < 0.6) {
                           _handleDismiss();
                       } else {
@@ -232,6 +287,7 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
             ),
           ),
         ),
+        ), 
       ],
     );
   }
@@ -257,7 +313,12 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       if (NinjaLayerBuilder.isAbsolute(layer)) {
          absCandidates.add(layer);
       } else {
-         final builtWidget = NinjaLayerBuilder.build(layer, context, parentSize: rootSize);
+         final builtWidget = NinjaLayerBuilder.build(
+           layer, 
+           context, 
+           parentSize: rootSize,
+           onAction: (action, data) => _handleAction(action, data),
+         );
          flowChildren.add(builtWidget);
       }
     }
@@ -284,7 +345,12 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
          // Flow content at z=0
          flowStructure,
          // Absolute layers on top, scrolling with flow  
-         ...sortedAbs.map((layer) => NinjaLayerBuilder.build(layer, context, parentSize: rootSize)),
+         ...sortedAbs.map((layer) => NinjaLayerBuilder.build(
+            layer, 
+            context, 
+            parentSize: rootSize,
+            onAction: (action, data) => _handleAction(action, data),
+         )),
        ],
     );
 

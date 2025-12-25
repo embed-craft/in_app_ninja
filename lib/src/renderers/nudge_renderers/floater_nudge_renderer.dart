@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:ui' as ui;
 import 'dart:math' as math;
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/campaign.dart';
 
 class FloaterNudgeRenderer extends StatefulWidget {
@@ -444,13 +445,24 @@ class _FloaterNudgeRendererState extends State<FloaterNudgeRenderer> with Single
     String text = content['label'] as String? ?? content['text'] as String? ?? 'Button';
     text = _substituteVariables(text, widget.campaign.config['variables'] as List?);
     
-    final action = content['action'] as String? ?? 'default';
+    // Fix: Action can be a Map or String
+    dynamic rawAction = content['action'];
+    String actionType = 'default';
+    Map<String, dynamic> actionData = {};
+    
+    if (rawAction is String) {
+       actionType = rawAction;
+    } else if (rawAction is Map) {
+       actionType = rawAction['type']?.toString() ?? 'default';
+       actionData = Map<String, dynamic>.from(rawAction);
+    }
+
     final themeColor = _parseColor(content['themeColor']) ?? _parseColor(style['backgroundColor']) ?? const Color(0xFF6366F1);
     final textColor = _parseColor(content['textColor']) ?? _parseColor(style['color']) ?? Colors.white;
     final borderRadius = (style['borderRadius'] as num?)?.toDouble() ?? 8.0;
     
     return GestureDetector(
-      onTap: () => _handleAction(action),
+      onTap: () => _handleAction(actionType, actionData),
       child: Container(
         padding: _parseEdgeInsets(style['padding']) ?? const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
         decoration: BoxDecoration(
@@ -1133,11 +1145,37 @@ class _FloaterNudgeRendererState extends State<FloaterNudgeRenderer> with Single
 
   // --- Helpers ---
 
-  void _handleAction(String action, [Map<String, dynamic>? data]) {
-    if (action == 'dismiss') {
-      widget.onDismiss?.call();
-    } else {
-      widget.onCTAClick?.call(action, data);
+  Future<void> _handleAction(String action, [Map<String, dynamic>? data]) async {
+    debugPrint('InAppNinja: 🎯 Floater Action triggered: $action, data: $data');
+    
+    switch (action) {
+      case 'dismiss':
+      case 'close':
+        widget.onDismiss?.call();
+        break;
+      case 'open_link':
+      case 'openLink':
+      case 'deeplink':
+        // Open URL in browser
+        final url = data?['url'] as String?;
+        if (url != null && url.isNotEmpty) {
+          debugPrint('InAppNinja: 🔗 Opening URL: $url');
+          try {
+            final uri = Uri.parse(url);
+            if (await canLaunchUrl(uri)) {
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+              debugPrint('InAppNinja: ✅ URL launched successfully');
+            } else {
+              debugPrint('InAppNinja: ❌ Cannot launch URL: $url');
+            }
+          } catch (e) {
+            debugPrint('InAppNinja: ❌ Error launching URL: $e');
+          }
+          widget.onCTAClick?.call(action, {'url': url, ...?data});
+        }
+        break;
+      default:
+        widget.onCTAClick?.call(action, data);
     }
   }
 

@@ -16,18 +16,51 @@ class NinjaTextMeasurer {
   }) {
     if (text.isEmpty) return Size.zero;
 
-    final fontSize = NinjaLayerUtils.parseDouble(style['fontSize']) ?? 14.0;
-    // Default to Inter if not specified, matching Dashboard
-    final fontFamily = style['fontFamily'] as String? ?? 'Inter'; 
-    final fontWeight = _parseFontWeight(style['fontWeight']);
-    final lineHeight = NinjaLayerUtils.parseDouble(style['lineHeight']) ?? 1.2;
+    // FIX 1: Pass context for Dynamic Scaling
+    final fontSize = NinjaLayerUtils.parseDouble(style['fontSize'], context) ?? 14.0;
+    
+    // FIX 2: Dynamic Font Loading (Google Fonts)
+    final fontFamily = style['fontFamily'] as String?;
+    final fontWeight = NinjaLayerUtils.parseFontWeight(style['fontWeight']);
+    // FIX 3: Line Height & Spacing (Synced with NudgeRenderer)
+    final lineHeight = NinjaLayerUtils.parseDouble(style['lineHeight'], context, true); // Scaled vertically? Or ratio? Usually ratio. 
+    // Wait, lineHeight in Flutter TextStyle is a multiplier (ratio), NOT pixels.
+    // If backend sends pixels (e.g. "24px"), we must divide by fontSize.
+    // NinjaLayerUtils.parseDouble usually returns pixels.
+    // If style['lineHeight'] is 1.5, parseDouble returns 1.5 (if no context) or scaled 1.5. A multiplier shouldn't scale.
+    // Let's check NinjaLayerUtils.parseDouble behavior. If string is "1.5", it parses double. Suffix "%" check.
+    // If it's a multiplier, we shouldn't pass context.
+    
+    double? height;
+    if (style['lineHeight'] != null) {
+       final rawLH = style['lineHeight'].toString();
+       if (rawLH.endsWith('px')) {
+          // It's pixels. Convert to multiplier.
+          final pxVal = NinjaLayerUtils.parseDouble(rawLH, context, true) ?? fontSize;
+          height = pxVal / fontSize;
+       } else {
+          // It's likely a multiplier.
+          height = double.tryParse(rawLH);
+       }
+    }
 
-    final textStyle = TextStyle(
-      fontFamily: fontFamily, 
+    final letterSpacing = NinjaLayerUtils.parseDouble(style['letterSpacing'], context);
+
+    TextStyle textStyle = TextStyle(
       fontSize: fontSize,
       fontWeight: fontWeight,
-      height: lineHeight,
+      height: height,
+      letterSpacing: letterSpacing,
+      fontFamily: fontFamily,
     );
+    
+    // Attempt Google Font
+    if (fontFamily != null && fontFamily.isNotEmpty) {
+       final googleFont = NinjaLayerUtils.getGoogleFont(fontFamily, textStyle: textStyle);
+       if (googleFont != null) {
+          textStyle = googleFont;
+       }
+    }
 
     final textSpan = TextSpan(
       text: text,
@@ -63,7 +96,7 @@ class NinjaTextMeasurer {
     );
 
     // 2. Add Padding
-    final padding = NinjaLayerUtils.parsePadding(style['padding']) ?? EdgeInsets.zero;
+    final padding = NinjaLayerUtils.parsePadding(style['padding'], context) ?? EdgeInsets.zero;
     
     // 3. Calculate Total Size
     return Size(

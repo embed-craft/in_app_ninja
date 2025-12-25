@@ -32,16 +32,18 @@ class NativeNudgeRenderer extends StatelessWidget {
 
   Widget _buildAndroidView() {
     // Merge campaign config with root-level fields
-    // Some fields might be stored at root level (layers, backgroundImageUrl, etc.)
+    // Ensure vital fields like type and layers are explicitly passed
     final campaignJson = campaign.toJson();
     final campaignData = {
+      // Base config
       ...campaign.config,
-      // Add layers if not in config
-      if (campaign.config['layers'] == null && campaignJson['layers'] != null)
-        'layers': campaignJson['layers'],
-      // Add components if they exist (alias for layers)
-      if (campaign.config['components'] == null && campaignJson['layers'] != null)
-        'components': campaignJson['layers'],
+      // Root overrides/fallbacks
+      'type': campaign.type,
+      'nudgeType': campaign.type,
+      'id': campaign.id,
+      // Ensure layers are present
+      'layers': campaign.layers ?? campaign.config['layers'] ?? campaignJson['layers'] ?? [],
+      'components': campaign.layers ?? campaign.config['components'] ?? campaignJson['layers'] ?? [],
     };
     
     return AndroidView(
@@ -63,16 +65,14 @@ class NativeNudgeRenderer extends StatelessWidget {
 
   Widget _buildIOSView() {
     // Merge campaign config with root-level fields
-    // Some fields might be stored at root level (layers, backgroundImageUrl, etc.)
     final campaignJson = campaign.toJson();
     final campaignData = {
       ...campaign.config,
-      // Add layers if not in config
-      if (campaign.config['layers'] == null && campaignJson['layers'] != null)
-       'layers': campaignJson['layers'],
-      // Add components if they exist (alias for layers)
-      if (campaign.config['components'] == null && campaignJson['layers'] != null)
-        'components': campaignJson['layers'],
+      'type': campaign.type,
+      'nudgeType': campaign.type,
+      'id': campaign.id,
+      'layers': campaign.layers ?? campaign.config['layers'] ?? campaignJson['layers'] ?? [],
+      'components': campaign.layers ?? campaign.config['components'] ?? campaignJson['layers'] ?? [],
     };
     
     return UiKitView(

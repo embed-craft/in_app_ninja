@@ -7,7 +7,7 @@ import 'ninja_image_layer.dart';
 import 'ninja_countdown_layer.dart';
 
 class NinjaLayerBuilder {
-  static Widget build(Map<String, dynamic> layer, BuildContext context, {Size? parentSize}) {
+  static Widget build(Map<String, dynamic> layer, BuildContext context, {Size? parentSize, Function(String action, Map<String, dynamic> data)? onAction}) {
     // 1. Identify Layer Type
     final type = layer['type']?.toString().toLowerCase() ?? 'text';
     debugPrint('NinjaLayerBuilder: Building layer type=$type, id=${layer['id']}');
@@ -57,12 +57,40 @@ class NinjaLayerBuilder {
     // 3. Handle Visibility
     if (layer['visible'] == false) return const SizedBox.shrink();
 
-    // 4. Handle Absolute Positioning (Overlay Mode)
+    // 4. Handle Actions (Tap)
+    // Extract action from content.action or direct usage
+    final contentMap = layer['content'] as Map<String, dynamic>?;
+    final rawAction = contentMap?['action'];
+    
+    if (onAction != null && rawAction != null) {
+      String actionType = 'default';
+      Map<String, dynamic> actionData = {};
+      
+      if (rawAction is String) {
+        actionType = rawAction;
+      } else if (rawAction is Map) {
+         actionType = rawAction['type']?.toString() ?? 'default';
+         actionData = Map<String, dynamic>.from(rawAction);
+      }
+      
+      if (actionType != 'none' && actionType != 'no_action') {
+         content = GestureDetector(
+           behavior: HitTestBehavior.opaque, // Ensure clicks are caught
+           onTap: () {
+             debugPrint("NinjaLayerBuilder: Tap detected on $type. Action: $actionType");
+             onAction(actionType, actionData);
+           },
+           child: content,
+         );
+      }
+    }
+
+    // 5. Handle Absolute Positioning (Overlay Mode)
     if (isAbsolute(layer)) {
       return _buildPositioned(layer, content, context);
     }
 
-    // 5. Default Flow
+    // 6. Default Flow
     final style = layer['style'] as Map<String, dynamic>?;
     final margin = NinjaLayerUtils.parsePadding(style?['margin'], context);
     

@@ -75,6 +75,31 @@ class NinjaButtonLayer extends StatelessWidget {
            effectivePadding = padding ?? const EdgeInsets.symmetric(horizontal: 16, vertical: 8);
         }
 
+        // Font Family Resolution
+        String? fontFamily = (style['fontFamily'] as String?) ?? (content['fontFamily'] as String?);
+        final fontUrl = content['fontUrl'] as String?;
+        if (fontUrl != null && fontUrl.isNotEmpty) {
+           final urlFamily = NinjaLayerUtils.getFontFamilyFromUrl(fontUrl);
+           if (urlFamily != null) fontFamily = urlFamily;
+        }
+
+        TextStyle textStyle = TextStyle(
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          color: textColor,
+        );
+
+        if (fontFamily != null) {
+           final googleFont = NinjaLayerUtils.getGoogleFont(fontFamily, textStyle: textStyle);
+           if (googleFont != null) {
+              textStyle = googleFont;
+           } else {
+              textStyle = textStyle.copyWith(fontFamily: fontFamily);
+           }
+        } else {
+           textStyle = textStyle.copyWith(fontFamily: 'Inter');
+        }
+
         return Container(
           width: width,
           height: height,
@@ -90,12 +115,7 @@ class NinjaButtonLayer extends StatelessWidget {
           alignment: Alignment.center,
           child: Text(
             text,
-            style: TextStyle(
-              fontSize: fontSize,
-              fontWeight: fontWeight,
-              color: textColor,
-              fontFamily: 'Inter',
-            ),
+            style: textStyle,
             textAlign: TextAlign.center,
           ),
         );

@@ -272,6 +272,12 @@
       "languageVersion": "2.19"
     },
     {
+      "name": "google_fonts",
+      "rootUri": "file:///C:/Users/AARYAN%20UPADHYAY/AppData/Local/Pub/Cache/hosted/pub.dev/google_fonts-6.3.2",
+      "packageUri": "lib/",
+      "languageVersion": "3.7"
+    },
+    {
       "name": "gtk",
       "rootUri": "file:///C:/Users/AARYAN%20UPADHYAY/AppData/Local/Pub/Cache/hosted/pub.dev/gtk-2.1.0",
       "packageUri": "lib/",

@@ -24,6 +24,8 @@ dependencies:
   app_links: ^6.3.0
   screenshot: ^3.0.0
   flutter_widget_from_html: ^0.10.0
+  google_fonts: ^6.3.2
+  url_launcher: ^6.2.0
 
 dev_dependencies:
   flutter_test:

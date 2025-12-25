@@ -37,6 +37,35 @@ class NinjaTextLayer extends StatelessWidget {
     final padding = NinjaLayerUtils.parsePadding(style['padding'], context);
     final radius = NinjaLayerUtils.parseDouble(style['borderRadius'], context) ?? 0;
     
+    // Font Family Resolution
+    String? fontFamily = (style['fontFamily'] as String?) ?? (content['fontFamily'] as String?);
+    final fontUrl = content['fontUrl'] as String?;
+    
+    // Attempt to extract family from URL if explicit family is missing or generic
+    if (fontUrl != null && fontUrl.isNotEmpty) {
+       final urlFamily = NinjaLayerUtils.getFontFamilyFromUrl(fontUrl);
+       if (urlFamily != null) fontFamily = urlFamily;
+    }
+
+    TextStyle textStyle = TextStyle(
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      color: textColor,
+      height: 1.2, // Match Web Default
+    );
+
+    // Apply Google Font
+    if (fontFamily != null) {
+       final googleFont = NinjaLayerUtils.getGoogleFont(fontFamily, textStyle: textStyle);
+       if (googleFont != null) {
+          textStyle = googleFont;
+       } else {
+          textStyle = textStyle.copyWith(fontFamily: fontFamily);
+       }
+    } else {
+       textStyle = textStyle.copyWith(fontFamily: 'Inter'); // Default fallback
+    }
+
     return Container(
       width: width,
       height: height,
@@ -57,13 +86,7 @@ class NinjaTextLayer extends StatelessWidget {
       alignment: width != null ? _getAlignment(textAlign) : null, // If width is fixed, align text inside
       child: Text(
         text,
-        style: TextStyle(
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          color: textColor,
-          fontFamily: 'Inter',
-          height: 1.2, // Match Web Default Line Height
-        ),
+        style: textStyle,
         textAlign: textAlign,
       ),
     );

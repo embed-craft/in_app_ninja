@@ -1,10 +1,36 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+import 'dart:typed_data';
 
 class NinjaLayerUtils {
-  // Reference design width (Precision Tuned)
-  // Adjusted to 375.0 to match the standard mobile breakpoint used in the Dashboard and Native Android SDK.
-  static const double kDesignWidth = 375.0;
-  static const double kDesignHeight = 813.0; // iPhone 14 Pro normalized height (852 / (393/375))
+  // Reference design dimensions (iPhone 14 Pro - matches Dashboard)
+  // PARITY FIX: Updated from 375×813 to 393×852 to match Dashboard baseline
+  static const double kDesignWidth = 393.0;
+  static const double kDesignHeight = 852.0;
+
+  // ✅ BUNDLED FONTS: Pre-cached fonts for instant loading
+  // These fonts work offline and load instantly via google_fonts package
+  static const List<String> supportedFonts = [
+    // Sans-Serif
+    'Roboto', 'Inter', 'Poppins', 'Open Sans', 'Lato',
+    'Montserrat', 'Nunito', 'Raleway', 'Ubuntu', 'Source Sans Pro',
+    // Serif
+    'Playfair Display', 'Merriweather', 'Lora', 'PT Serif',
+    // Monospace
+    'Fira Code', 'Source Code Pro', 'JetBrains Mono',
+    // Decorative
+    'Pacifico', 'Dancing Script', 'Lobster',
+  ];
+
+  /// Check if a font is in the supported bundled fonts list
+  static bool isSupportedFont(String fontFamily) {
+    final cleanName = fontFamily.split(',').first.trim()
+        .replaceAll("'", "").replaceAll('"', "");
+    return supportedFonts.any((f) => f.toLowerCase() == cleanName.toLowerCase());
+  }
 
   static double? parseDouble(dynamic value, [BuildContext? context, bool isVertical = false]) {
     if (value == null) return null;
@@ -112,24 +138,108 @@ class NinjaLayerUtils {
      }
      
      return parseSize(value, context, isVertical);
+   }
+
+   /// PARITY FIX: Get container-relative scale factor
+   /// Dashboard formula: containerDim / designDim
+   static double getScale(Size parentSize, {bool isVertical = false}) {
+     if (isVertical) {
+       return parentSize.height / kDesignHeight;
+     }
+     return parentSize.width / kDesignWidth;
+   }
+
+   /// PARITY FIX: Scale a value using container-relative scale
+   /// Dashboard formula: px × (containerDim / designDim)
+   static double? scaleValue(dynamic value, Size parentSize, {bool isVertical = false}) {
+     if (value == null) return null;
+     final str = value.toString().trim();
+     // Percentages resolve against parent
+     if (str.endsWith('%')) {
+       final pct = double.tryParse(str.replaceAll('%', ''));
+       if (pct == null) return null;
+       return (isVertical ? parentSize.height : parentSize.width) * pct / 100;
+     }
+     // Pixels scale with container
+     final px = double.tryParse(str.replaceAll('px', ''));
+     if (px == null) return null;
+     return px * getScale(parentSize, isVertical: isVertical);
+   }
+
+   /// PARITY FIX: Convert pixel position to container-relative position
+   /// Dashboard formula: (px / designDim) × 100 → CSS percentage → applied to container
+   static double? toPercentOfContainer(dynamic value, {required bool isVertical, required Size parentSize}) {
+     if (value == null) return null;
+     final str = value.toString().trim();
+     // Already percentage - resolve against parent
+     if (str.endsWith('%')) {
+       final pct = double.tryParse(str.replaceAll('%', ''));
+       if (pct == null) return null;
+       return (isVertical ? parentSize.height : parentSize.width) * pct / 100;
+     }
+     // Pixel - convert using design baseline
+     final px = double.tryParse(str.replaceAll('px', ''));
+     if (px == null) return null;
+     final designDim = isVertical ? kDesignHeight : kDesignWidth;
+     final containerDim = isVertical ? parentSize.height : parentSize.width;
+     final pct = (px / designDim) * 100; // Dashboard percentage
+     final result = (pct / 100) * containerDim; // Apply to container
+     debugPrint('InAppNinja: 🔢 toPercent: $px / $designDim = ${pct.toStringAsFixed(2)}% → ${result.toStringAsFixed(2)}px of ${containerDim}px');
+     return result;
   }
 
   static Color? parseColor(dynamic value) {
-    if (value == null || value is! String) return null;
+    if (value == null) return null;
+    if (value is Color) return value;
+    if (value is! String) return null;
     if (value.isEmpty) return null;
     
     // Check for named colors or transparent
     if (value == 'transparent') return Colors.transparent;
 
     try {
-      var hex = value.replaceAll('#', '');
-      if (hex.length == 6) {
-        hex = 'FF$hex';
+      // Hex
+      if (value.startsWith('#')) {
+        var hex = value.replaceAll('#', '');
+        if (hex.length == 6) {
+          hex = 'FF$hex';
+        } else if (hex.length == 8) {
+          // Allow 8 digit hex (AARRGGBB or RRGGBBAA? Flutter is AARRGGBB)
+          // Usually web is RRGGBBAA... sticking to standard parsing logic.
+          // If needed, assume RRGGBBAA -> AARRGGBB conversion here if data source is CSS.
+        }
+        return Color(int.parse(hex, radix: 16));
       }
-      return Color(int.parse(hex, radix: 16));
+      
+      // RGBA
+      if (value.startsWith('rgba')) {
+        final parts = value.substring(5, value.length - 1).split(',');
+        if (parts.length == 4) {
+          return Color.fromRGBO(
+            int.parse(parts[0].trim()),
+            int.parse(parts[1].trim()),
+            int.parse(parts[2].trim()),
+            double.parse(parts[3].trim()),
+          );
+        }
+      }
+      
+      // RGB
+      if (value.startsWith('rgb')) {
+        final parts = value.substring(4, value.length - 1).split(',');
+        if (parts.length == 3) {
+          return Color.fromARGB(
+            255,
+            int.parse(parts[0].trim()),
+            int.parse(parts[1].trim()),
+            int.parse(parts[2].trim()),
+          );
+        }
+      }
     } catch (_) {
       return null;
     }
+    return null;
   }
 
   static FontWeight parseFontWeight(dynamic value) {
@@ -140,6 +250,39 @@ class NinjaLayerUtils {
       case 'normal': 
       default: return FontWeight.normal;
     }
+  }
+
+  /// Tries to load a Google Font by name. Returns null if not found or empty.
+  static TextStyle? getGoogleFont(String? fontFamily, {TextStyle? textStyle}) {
+    if (fontFamily == null || fontFamily.isEmpty) return null;
+    try {
+      // Normalize name: Remove quotes, take first in comma-separated list
+      // e.g. "'Open Sans', sans-serif" -> "Open Sans"
+      var cleanName = fontFamily.split(',').first.trim();
+      cleanName = cleanName.replaceAll("'", "").replaceAll('"', "");
+      
+      return GoogleFonts.getFont(cleanName, textStyle: textStyle);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String? getFontFamilyFromUrl(String? url) {
+    if (url == null || url.isEmpty) return null;
+    try {
+       final uri = Uri.parse(url);
+       final family = uri.queryParameters['family'];
+       if (family != null) {
+          // Handle "BBH+Bogle" -> "BBH Bogle"
+          // Handle "Robin:wght@400;700" -> "Robin"
+          String clean = family.replaceAll('+', ' ');
+          if (clean.contains(':')) {
+             clean = clean.split(':').first;
+          }
+          return clean;
+       }
+    } catch (_) {}
+    return null;
   }
 
   static EdgeInsets? parsePadding(dynamic value, [BuildContext? context]) {
@@ -179,20 +322,89 @@ class NinjaLayerUtils {
   }
 
   static List<BoxShadow>? parseShadows(dynamic value) {
-    if (value == null || value is! String) return null;
-    if (value.isEmpty) return null;
+    // Forced Rebuild
+    if (value == null) return null;
     
-    // Basic parser for "0 2px 8px rgba(0,0,0,0.1)"
-    // This is complex to parse perfectly without a CSS parser. 
-    // We can map specific known presets from the dashboard to Flutter shadows.
-    
-    if (value.contains('rgba(0,0,0,0.1)')) { // Soft
-       return [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8, offset: const Offset(0, 2))]; 
-    }
-    if (value.contains('rgba(0,0,0,0.25)')) { // Hard
-       return [BoxShadow(color: Colors.black.withOpacity(0.25), blurRadius: 24, offset: const Offset(0, 8))]; 
+    // Case 1: List of Maps (Structured)
+    if (value is List) {
+      final List<BoxShadow> shadows = [];
+      for (var s in value) {
+        if (s is Map) {
+          shadows.add(BoxShadow(
+            color: parseColor(s['color']) ?? Colors.black.withOpacity(0.1),
+            offset: Offset(
+              (s['x'] as num?)?.toDouble() ?? 0,
+              (s['y'] as num?)?.toDouble() ?? 0,
+            ),
+            blurRadius: math.max(0.0, (s['blur'] as num?)?.toDouble() ?? 0),
+            spreadRadius: (s['spread'] as num?)?.toDouble() ?? 0,
+          ));
+        }
+      }
+      return shadows.isNotEmpty ? shadows : null;
     }
 
+    // Case 2: String preset (Legacy/CSS)
+    if (value is String && value.isNotEmpty) {
+      // Try generic regex parsing: "0px 8px 16px rgba(0,0,0,0.2)"
+      // Matches: Xpx Ypx Blurpx Color (Spread optional)
+      // Regex: (-?\d+)px (-?\d+)px (-?\d+)px (?:(-?\d+)px )?(rgba?\(.*?\)|#[0-9a-fA-F]+)
+      final regex = RegExp(r'(-?\d+)px\s+(-?\d+)px\s+(-?\d+)px\s+(?:(-?\d+)px\s+)?(rgba?\(.*?\)|#[0-9a-fA-F]+)');
+      final match = regex.firstMatch(value);
+      
+      if (match != null) {
+          final x = double.tryParse(match.group(1)!) ?? 0;
+          final y = double.tryParse(match.group(2)!) ?? 0;
+          final blur = double.tryParse(match.group(3)!) ?? 0;
+          final spread = match.group(4) != null ? (double.tryParse(match.group(4)!) ?? 0) : 0.0;
+          final colorStr = match.group(5);
+          final color = parseColor(colorStr) ?? Colors.black.withOpacity(0.2);
+          
+          return [BoxShadow(
+            color: color,
+            offset: Offset(x, y),
+            blurRadius: math.max(0.0, blur),
+            spreadRadius: spread,
+          )];
+      }
+
+      if (value.contains('rgba(0,0,0,0.1)')) { // Soft
+         return [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 8, offset: const Offset(0, 2))]; 
+      }
+      if (value.contains('rgba(0,0,0,0.25)')) { // Hard
+         return [BoxShadow(color: Colors.black.withOpacity(0.25), blurRadius: 24, offset: const Offset(0, 8))]; 
+      }
+    }
+
+    return null;
+  }
+
+  static Gradient? parseGradient(dynamic value) {
+    if (value == null || value is! Map) return null;
+    
+    final type = value['type'] as String? ?? 'linear';
+    final colorsList = value['colors'] as List?;
+    final stopsList = value['stops'] as List?;
+    final angle = (value['angle'] as num?)?.toDouble() ?? 0.0; // Assume degrees
+    
+    if (colorsList == null || colorsList.isEmpty) return null;
+    
+    final colors = colorsList.map((c) => parseColor(c) ?? Colors.transparent).toList();
+    final stops = stopsList?.map((s) => (s as num).toDouble()).toList();
+    
+    if (type == 'linear') {
+      // Convert Angle to Alignment (Approximate)
+      // 0deg = Bottom to Top? CSS 180deg = Top to Bottom
+      // Simple alignment for now:
+      return LinearGradient(
+        colors: colors,
+        stops: stops,
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        transform: GradientRotation(angle * 3.14159 / 180),
+      );
+    }
+    
     return null;
   }
 
@@ -202,8 +414,8 @@ class NinjaLayerUtils {
       case 'fill': return BoxFit.fill;
       case 'fitWidth': return BoxFit.fitWidth;
       case 'fitHeight': return BoxFit.fitHeight;
-      case 'cover': 
-      default: return BoxFit.cover;
+      case 'cover': return BoxFit.cover;
+      default: return BoxFit.contain; // PARITY FIX: Match Dashboard
     }
   }
 

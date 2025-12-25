@@ -33,6 +33,7 @@ class NinjaNativeView(
         setInitialScale(100)  // ADDED: Force 100% scale
         setBackgroundColor(0)
         webViewClient = WebViewClient()
+        webChromeClient = android.webkit.WebChromeClient() // ✅ ENABLE ALERTS
         addJavascriptInterface(NinjaBridge(), "NinjaBridge")
     }
 
@@ -111,6 +112,10 @@ class NinjaNativeView(
         val safeConfigJson = configJson.replace("/", "\\/")
         val js = """
 const config = $safeConfigJson;
+
+// DEBUG: Verify settings reach the device (Unconditional)
+console.log("Config received:", JSON.stringify(config));
+alert("DEBUG CONFIG: " + JSON.stringify(config)); 
 
 // BRIDGE: Send action to Android Native
 const handleAction = (action) => {
@@ -288,6 +293,171 @@ function renderBottomSheet() {
     }
 
     root.appendChild(sheet);
+}
+
+function renderModal() {
+    // Helper to check multiple property keys (camelCase vs snake_case)
+    function getProp(keys, defaultValue) {
+        if (!Array.isArray(keys)) keys = [keys];
+        for (var i = 0; i < keys.length; i++) {
+            if (config[keys[i]] !== undefined) return config[keys[i]];
+        }
+        return defaultValue;
+    }
+
+    let layers = [];
+    if (config.components && config.components.length > 0) {
+        layers = config.components;
+    } else if (config.layers) {
+        layers = config.layers;
+    }
+
+    const root = document.getElementById('root');
+    
+    // Config Values with Fallbacks
+    const overlayConfig = getProp(['overlay']) || {};
+    const overlayEnabled = overlayConfig.enabled !== false; // Default true if object exists? No, check enabled prop. 
+    // Actually safer to check config.overlay directly or via getProp paths if needed, but usually overlay object has consistent keys. 
+    // Let's assume overlay object itself is consistent, but the key 'overlay' might be stable.
+    
+    // 1. OVERLAY (Scrim)
+    if (overlayConfig && overlayConfig.enabled) {
+        const overlay = document.createElement('div');
+        const opacity = overlayConfig.opacity != null ? overlayConfig.opacity : 0.5;
+        const color = overlayConfig.color || '#000000';
+        
+        overlay.style.cssText = 
+            'position: absolute; top: 0; left: 0; right: 0; bottom: 0;' +
+            'background-color: ' + color + ';' +
+            'opacity: ' + opacity + ';' +
+            'z-index: 99;'; // Behind Modal
+            
+        if (overlayConfig.dismissOnClick) {
+            overlay.onclick = function() {
+                handleAction({ type: 'dismiss' });
+            };
+        }
+        root.appendChild(overlay);
+    }
+
+    // 2. MODAL BOX (Positioning Context)
+    const modal = document.createElement('div');
+    modal.className = 'modal-box';
+    
+    // Fetch Properties
+    const width = getProp(['width']) || '90%';
+    const height = getProp(['height']) || 'auto';
+    const bgColor = getProp(['backgroundColor', 'background_color']) || '#FFFFFF';
+    
+    // Robust Border Radius
+    let borderRadius = 16;
+    const rawRadius = getProp(['borderRadius', 'border_radius']);
+    if (typeof rawRadius === 'number') {
+        borderRadius = rawRadius;
+    } else if (rawRadius && typeof rawRadius === 'object') {
+        borderRadius = rawRadius.topLeft || rawRadius.top_left || 16;
+    }
+
+    // Box Shadow
+    const elevation = getProp(['elevation']);
+    const rawShadow = getProp(['boxShadow', 'box_shadow']);
+    const boxShadow = rawShadow || (elevation ? '0 4px 12px rgba(0,0,0,0.15)' : 'none');
+    
+    // Background handling
+    const bgUrl = getProp(['backgroundImageUrl', 'background_image_url', 'backgroundImage', 'background_image']);
+    const bgSize = getProp(['backgroundSize', 'background_size']) || 'cover';
+    const bgPos = getProp(['backgroundPosition', 'background_position']) || 'center';
+
+    // Construct CSS string
+    let css = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);';
+    css += 'width: ' + getNum(width) + (typeof width === 'string' && width.endsWith('%') ? '%' : 'px') + ';';
+    css += 'max-width: 400px;';
+    css += 'height: ' + (height === 'auto' ? 'auto' : getNum(height) + 'px') + ';';
+    css += 'background-color: ' + bgColor + ';';
+    css += 'border-radius: ' + borderRadius + 'px;';
+    css += 'box-shadow: ' + boxShadow + ';';
+    css += 'padding: 0;'; // FORCE 0 padding for coordinate accuracy
+    css += 'z-index: 100;';
+    css += 'overflow: visible;'; // Allow absolute children to pop
+    css += 'min-height: 100px;';   // Prevent collapse
+
+    if (bgUrl) {
+         css += "background-image: url('" + bgUrl + "');";
+         css += 'background-size: ' + bgSize + ';';
+         css += 'background-position: ' + bgPos + ';';
+         css += 'background-repeat: no-repeat;';
+    }
+
+    modal.style.cssText = css;
+
+    // 3. INNER WRAPPER (Relative Flow + Padding)
+    const contentWrapper = document.createElement('div');
+    const p = getProp(['padding']) || {};
+    const paddingStr = (p.top || 0) + 'px ' + (p.right || 0) + 'px ' + (p.bottom || 0) + 'px ' + (p.left || 0) + 'px';
+    
+    contentWrapper.style.cssText = 
+        'position: relative; ' +
+        'width: 100%; height: 100%; ' +
+        'display: flex; flex-direction: column; ' +
+        'padding: ' + paddingStr + ';';
+        
+    // Create layers map
+    const layersMap = {};
+    layers.forEach(function(l) { layersMap[l.id] = l; });
+    
+    // Flatten logic
+    const allRenderableLayers = [];
+    layers.forEach(function(layer) {
+        if (layer.type === 'container' && layer.children && layer.children.length > 0) {
+            layer.children.forEach(function(child) {
+                const childLayer = typeof child === 'string' ? layersMap[child] : child;
+                if (childLayer && childLayer.visible !== false) {
+                    allRenderableLayers.push(childLayer);
+                }
+            });
+        } else if (layer.type !== 'container') {
+            if (layer.visible !== false) {
+                allRenderableLayers.push(layer);
+            }
+        }
+    });
+
+    // Render RELATIVE layers -> contentWrapper
+    allRenderableLayers.forEach(function(layer) {
+        const style = layer.style || {};
+        const isAbsolute = style.position === 'absolute' || style.position === 'fixed';
+        if (!isAbsolute) {
+            const el = renderLayer(layer, layersMap);
+            if (el) contentWrapper.appendChild(el);
+        }
+    });
+
+    modal.appendChild(contentWrapper);
+
+    // Render ABSOLUTE layers -> modal (Directly, using 0,0 origin)
+    allRenderableLayers.forEach(function(layer) {
+        const style = layer.style || {};
+        const isAbsolute = style.position === 'absolute' || style.position === 'fixed';
+        if (isAbsolute) {
+            const el = renderLayer(layer, layersMap);
+            if (el) modal.appendChild(el);
+        }
+    });
+
+    // Close Button
+    const showClose = getProp(['showCloseButton', 'show_close_button']);
+    if (showClose) {
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '×';
+        closeBtn.style.cssText = 'position: absolute; top: 12px; right: 12px; width: 28px; height: 28px; border-radius: 50%; background-color: rgba(0,0,0,0.05); border: none; font-size: 20px; display: flex; align-items: center; justify-content: center; cursor: pointer; z-index: 10;';
+        closeBtn.onclick = function(e) {
+            e.stopPropagation();
+            handleAction({ type: 'close' });
+        };
+        modal.appendChild(closeBtn);
+    }
+
+    root.appendChild(modal);
 }
 
 function renderLayer(layer, layersMap) {
@@ -486,7 +656,13 @@ function renderLayer(layer, layersMap) {
 }
 
 window.addEventListener('DOMContentLoaded', function() {
-    renderBottomSheet();
+    // Dispatch based on Type
+    if (config.nudgeType === 'modal' || config.type === 'modal') {
+        renderModal();
+    } else {
+        // Default to BottomSheet
+        renderBottomSheet();
+    }
 });
 """
 
