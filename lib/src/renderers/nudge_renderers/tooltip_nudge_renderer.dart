@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_widget_from_html/flutter_widget_from_html.dart';
+import 'dart:async';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/campaign.dart';
+import '../layers/ninja_layer_utils.dart';
 import '../../app_ninja.dart';
 
-/// Tooltip Nudge Renderer
+/// Tooltip Nudge Renderer - New Architecture
 /// 
-/// Renders a tooltip pointing to a target widget:
+/// Following Modal construction logic with:
+/// - Layer-based structure (text, image, button)
+/// - ScaleX/ScaleY dynamic positioning
 /// - Arrow pointing to target element
-/// - Positioned above/below/left/right of target
-/// - Highlight/pulse effect on target
-/// - Auto-dismiss or manual close
+/// - Spotlight overlay with target cutout
+/// - Auto-scroll to target element
 class TooltipNudgeRenderer extends StatefulWidget {
   final Campaign campaign;
   final VoidCallback? onDismiss;
@@ -31,17 +34,23 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
   late AnimationController _controller;
   late Animation<double> _scaleAnimation;
   late Animation<double> _fadeAnimation;
+  
+  // Target element bounds
+  Rect? _targetRect;
+  bool _hasScrolledToTarget = false;
 
   @override
   void initState() {
     super.initState();
+    final config = widget.campaign.config;
+    final duration = config['animationDuration'] as int? ?? 250;
     
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 250),
+      duration: Duration(milliseconds: duration),
     );
 
-    _scaleAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.0).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeOutBack),
     );
 
@@ -49,7 +58,78 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       CurvedAnimation(parent: _controller, curve: Curves.easeOut),
     );
 
-    _controller.forward();
+    // Find target element and scroll if needed
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _resolveTargetElement();
+    });
+  }
+
+  void _resolveTargetElement() {
+    final config = widget.campaign.config;
+    
+    // FIX: Check multiple paths for targetElementId
+    final tooltipConfig = config['tooltipConfig'] as Map<String, dynamic>? ?? 
+                          config['tooltip_config'] as Map<String, dynamic>? ?? 
+                          config;
+    
+    final targetId = tooltipConfig['targetElementId']?.toString() ?? 
+                     tooltipConfig['target_element_id']?.toString() ??
+                     config['targetElementId']?.toString() ?? 
+                     config['target_element_id']?.toString();
+    
+    debugPrint('InAppNinja: 🔍 Looking for targetElementId: $targetId');
+    debugPrint('InAppNinja: 📦 Config keys: ${config.keys.toList()}');
+    debugPrint('InAppNinja: 📦 TooltipConfig keys: ${tooltipConfig.keys.toList()}');
+    
+    if (targetId != null) {
+      final targetContext = AppNinja.getTargetContext(targetId);
+      if (targetContext != null) {
+        final renderBox = targetContext.findRenderObject() as RenderBox?;
+        if (renderBox != null && renderBox.hasSize) {
+          final offset = renderBox.localToGlobal(Offset.zero);
+          setState(() {
+            _targetRect = Rect.fromLTWH(
+              offset.dx,
+              offset.dy,
+              renderBox.size.width,
+              renderBox.size.height,
+            );
+          });
+          
+          // 🔥 DEBUG: Print target rect
+          debugPrint('🎯 Target Found! _targetRect: $_targetRect');
+          
+          // Auto-scroll if target is not in viewport
+          if (!_hasScrolledToTarget) {
+            _scrollToTargetIfNeeded(targetContext);
+            _hasScrolledToTarget = true;
+          }
+          
+          _controller.forward();
+        }
+      } else {
+        // No target found, show centered
+        _controller.forward();
+      }
+    } else {
+      // No target specified
+      _controller.forward();
+    }
+  }
+
+  void _scrollToTargetIfNeeded(BuildContext targetContext) {
+    // Ensure the element is visible by scrolling
+    Scrollable.ensureVisible(
+      targetContext,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      alignment: 0.5, // Center the target
+    ).then((_) {
+      // Re-resolve position after scroll
+      Future.delayed(const Duration(milliseconds: 100), () {
+        _resolveTargetElement();
+      });
+    });
   }
 
   @override
@@ -63,305 +143,573 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     widget.onDismiss?.call();
   }
 
-  void _handleCTA(String action) {
-    final config = widget.campaign.config;
-    widget.onCTAClick?.call(action, config);
-    _handleDismiss();
+  Future<void> _handleAction(String action, [Map<String, dynamic>? data]) async {
+    debugPrint('InAppNinja: 🎯 Tooltip Action: $action, data: $data');
+    
+    switch (action) {
+      case 'dismiss':
+      case 'close':
+        _handleDismiss();
+        break;
+      case 'deeplink':
+      case 'open_link':
+        final url = data?['url'] as String?;
+        if (url != null && url.isNotEmpty) {
+          try {
+            final uri = Uri.parse(url);
+            final isWebUrl = uri.scheme == 'http' || uri.scheme == 'https';
+            
+            if (isWebUrl) {
+              if (await canLaunchUrl(uri)) {
+                await launchUrl(uri, mode: LaunchMode.externalApplication);
+              }
+            } else {
+              // Custom app deeplink - try directly
+              await launchUrl(uri, mode: LaunchMode.externalApplication);
+            }
+          } catch (e) {
+            debugPrint('InAppNinja: ❌ Deeplink error: $e');
+          }
+          widget.onCTAClick?.call(action, {'url': url, ...?data});
+        }
+        break;
+      case 'navigate':
+        final route = data?['route'] as String? ?? data?['screen'] as String?;
+        widget.onCTAClick?.call(action, {'route': route, ...?data});
+        break;
+      default:
+        widget.onCTAClick?.call(action, data);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final config = widget.campaign.config;
-    final text = config['text']?.toString() ?? 'Tip!';
-    final position = config['position']?.toString() ?? 'bottom'; // top, bottom, left, right
-    final backgroundColor = _parseColor(config['backgroundColor']) ?? const Color(0xFF1F2937);
-    final textColor = _parseColor(config['textColor']) ?? Colors.white;
     
-    // Default Target: Center of Screen
-    double targetX = (config['targetX'] as num?)?.toDouble() ?? MediaQuery.of(context).size.width / 2;
-    double targetY = (config['targetY'] as num?)?.toDouble() ?? MediaQuery.of(context).size.height / 2;
-    double targetWidth = 0;
-    double targetHeight = 0;
-
-    // Resolve Target ID if present
-    final targetId = config['targetElementId']?.toString() ?? config['target_element_id']?.toString();
+    // FIX #3: Properly merge tooltipConfig - try multiple sources
+    final tooltipConfig = config['tooltipConfig'] as Map<String, dynamic>? 
+        ?? config['tooltip_config'] as Map<String, dynamic>?
+        ?? config;
     
-    if (targetId != null) {
-      final targetContext = AppNinja.getTargetContext(targetId);
-      if (targetContext != null) {
-        final renderBox = targetContext.findRenderObject() as RenderBox?;
-        if (renderBox != null && renderBox.hasSize) {
-           final offset = renderBox.localToGlobal(Offset.zero);
-           targetX = offset.dx;
-           targetY = offset.dy;
-           targetWidth = renderBox.size.width;
-           targetHeight = renderBox.size.height;
-           
-           // Adjust target point to specific edge based on position
-           if (position == 'bottom') {
-             targetX += targetWidth / 2;
-             targetY += targetHeight;
-           } else if (position == 'top') {
-             targetX += targetWidth / 2;
-             // targetY is already top
-           } else if (position == 'right') {
-             targetX += targetWidth;
-             targetY += targetHeight / 2;
-           } else if (position == 'left') {
-             targetY += targetHeight / 2;
-           }
-        }
-      }
-    }
-
-    // Parse Design Properties
-    final double roundness = (config['roundness'] as num?)?.toDouble() ?? 8.0;
-    final double paddingVal = (config['padding'] as num?)?.toDouble() ?? 12.0;
-    final EdgeInsets padding = EdgeInsets.all(paddingVal);
-    final String? overlayColorStr = config['overlayColor']?.toString() ?? config['overlay']?.toString();
-    final Color overlayColor = _parseColor(overlayColorStr)?.withOpacity((config['overlayOpacity'] as num?)?.toDouble() ?? 0.3) 
-                             ?? Colors.black.withOpacity(0.3);
+    // FIX #4: Read layers from campaign.layers (correct source), fallback to config
+    final rawLayers = widget.campaign.layers ?? config['layers'] as List<dynamic>? ?? [];
     
-    final double targetRoundness = (config['targetRoundness'] as num?)?.toDouble() ?? 0.0;
-    final BoxShape targetShape = targetRoundness > 20 ? BoxShape.circle : BoxShape.rectangle;
+    // Filter out container layers, get only renderable child layers
+    final layers = rawLayers.where((l) {
+      final type = (l as Map<String, dynamic>?)?['type']?.toString() ?? '';
+      return type != 'container' && type != 'tooltip';
+    }).toList();
+    
+    // Device scaling
+    final deviceWidth = MediaQuery.of(context).size.width;
+    const double designWidth = 393.0; // iPhone 14 Pro baseline
+    final scaleRatio = deviceWidth / designWidth;
+    
+    // Position
+    final position = tooltipConfig['position']?.toString() ?? 'bottom';
+    final offsetX = (tooltipConfig['offsetX'] as num?)?.toDouble() ?? 0;
+    final offsetY = (tooltipConfig['offsetY'] as num?)?.toDouble() ?? 0;
+    
+    // Target styling
+    final targetBorderRadius = (tooltipConfig['targetBorderRadius'] as num?)?.toDouble() ?? 8;
+    final targetBorderColor = NinjaLayerUtils.parseColor(tooltipConfig['targetBorderColor']) ?? Colors.blue;
+    final targetBorderWidth = (tooltipConfig['targetBorderWidth'] as num?)?.toDouble() ?? 2;
+    
+    // Tooltip body - Handle widthMode like dashboard!
+    final widthMode = tooltipConfig['widthMode']?.toString() ?? 'custom';
+    final rawWidth = (tooltipConfig['width'] as num?)?.toDouble() ?? 280;
+    // Only use fixed width if mode is 'custom'
+    final double? tooltipWidth = widthMode == 'custom' ? rawWidth * scaleRatio : null;
+    
+    debugPrint('📐 widthMode: $widthMode, rawWidth: $rawWidth, tooltipWidth: $tooltipWidth');
+    
+    final tooltipBgColor = NinjaLayerUtils.parseColor(tooltipConfig['backgroundColor']) ?? const Color(0xFF1F2937);
+    final backgroundOpacity = (tooltipConfig['backgroundOpacity'] as num?)?.toDouble() ?? 1.0;
+    final backgroundImageUrl = tooltipConfig['backgroundImageUrl']?.toString();
+    final backgroundSize = tooltipConfig['backgroundSize']?.toString() ?? 'cover';
+    // SCALE borderRadius and padding!
+    final rawBorderRadius = (tooltipConfig['borderRadius'] as num?)?.toDouble() ?? 12;
+    final borderRadius = rawBorderRadius * scaleRatio;
+    final rawPadding = (tooltipConfig['padding'] as num?)?.toDouble() ?? 16;
+    final padding = rawPadding * scaleRatio;
+    
+    // Height (optional)
+    final heightMode = tooltipConfig['heightMode']?.toString() ?? 'auto';
+    final rawHeight = (tooltipConfig['height'] as num?)?.toDouble();
+    final tooltipHeight = heightMode == 'custom' && rawHeight != null ? rawHeight * scaleRatio : null;
+    
+    // Shadow - SCALE blur!
+    final shadowEnabled = tooltipConfig['shadowEnabled'] != false;
+    final rawShadowBlur = (tooltipConfig['shadowBlur'] as num?)?.toDouble() ?? 25;
+    final shadowBlur = rawShadowBlur * scaleRatio;
+    final shadowOpacity = (tooltipConfig['shadowOpacity'] as num?)?.toDouble() ?? 0.2;
+    
+    // Arrow - SCALE size!
+    final arrowEnabled = tooltipConfig['arrowEnabled'] != false;
+    final rawArrowSize = (tooltipConfig['arrowSize'] as num?)?.toDouble() ?? 10;
+    final arrowSize = rawArrowSize * scaleRatio;
+    final arrowPositionPercent = (tooltipConfig['arrowPositionPercent'] as num?)?.toDouble() ?? 50;
+    final arrowRoundness = (tooltipConfig['arrowRoundness'] as num?)?.toDouble() ?? 0;
+    
+    // Overlay
+    final overlayEnabled = tooltipConfig['overlayEnabled'] != false;
+    final overlayColor = NinjaLayerUtils.parseColor(tooltipConfig['overlayColor']) ?? Colors.black;
+    final overlayOpacity = (tooltipConfig['overlayOpacity'] as num?)?.toDouble() ?? 0.5;
 
-    // Calculate Tooltip Offsets
-    // Since we don't know the tooltip size, we use FractionalTranslation to center/offset it.
-    double? left, top, right, bottom;
-    Offset translation = Offset.zero;
-
-    if (position == 'bottom') {
-      left = targetX;
-      top = targetY + 10; // Gap
-      translation = const Offset(-0.5, 0); // Center Horizontally
-    } else if (position == 'top') {
-      left = targetX;
-      bottom = MediaQuery.of(context).size.height - targetY + 10;
-      translation = const Offset(-0.5, 0); // Center Horizontally
-    } else if (position == 'right') {
-      left = targetX + 10;
-      top = targetY;
-      translation = const Offset(0, -0.5); // Center Vertically
-    } else if (position == 'left') {
-      right = MediaQuery.of(context).size.width - targetX + 10;
-      top = targetY;
-      translation = const Offset(0, -0.5); // Center Vertically
+    // 🔥 DEBUG: Print all parsed values
+    debugPrint('=== TOOLTIP CONFIG DEBUG ===');
+    debugPrint('deviceWidth: $deviceWidth, scaleRatio: $scaleRatio');
+    debugPrint('rawWidth: $rawWidth → scaledWidth: $tooltipWidth');
+    debugPrint('position: $position, offsetX: $offsetX, offsetY: $offsetY');
+    debugPrint('bgColor: $tooltipBgColor, bgOpacity: $backgroundOpacity');
+    debugPrint('shadowEnabled: $shadowEnabled, blur: $shadowBlur, opacity: $shadowOpacity');
+    debugPrint('arrowEnabled: $arrowEnabled, size: $arrowSize');
+    debugPrint('overlayColor: $overlayColor, overlayOpacity: $overlayOpacity');
+    debugPrint('layers count: ${layers.length}');
+    debugPrint('============================');
+    debugPrint('🔍 overlayEnabled: $overlayEnabled, _targetRect: $_targetRect');
+    if (_targetRect != null) {
+      final screenHeight = MediaQuery.of(context).size.height;
+      final bottomValue = screenHeight - _targetRect!.top + arrowSize + 4 - offsetY;
+      debugPrint('📐 Screen height: $screenHeight, bottom value: $bottomValue');
     }
 
     return Material(
       color: Colors.transparent,
       child: Stack(
         children: [
-          // Overlay
-          GestureDetector(
-            onTap: _handleDismiss,
-            child: Container(
-              color: overlayColor,
+          // Overlay with Spotlight (cutout for target)
+          if (overlayEnabled)
+            GestureDetector(
+              onTap: _handleDismiss,
+              child: _targetRect != null
+                  ? CustomPaint(
+                      size: MediaQuery.of(context).size,
+                      painter: _SpotlightPainter(
+                        targetRect: _targetRect!,
+                        overlayColor: overlayColor.withOpacity(overlayOpacity),
+                        targetBorderRadius: targetBorderRadius,
+                        targetBorderColor: targetBorderColor,
+                        targetBorderWidth: targetBorderWidth,
+                      ),
+                    )
+                  : Container(
+                      color: overlayColor.withOpacity(overlayOpacity),
+                    ),
             ),
-          ),
 
-          // Tooltip Layer
-          Positioned(
-            left: left,
-            top: top,
-            right: right,
-            bottom: bottom,
-            child: FractionalTranslation(
-              translation: translation,
+          // Tooltip Positioned
+          if (_targetRect != null)
+            Positioned(
+              // Use rawWidth for positioning (always available), but tooltipWidth for rendering
+              left: _calculateTooltipX(position, _targetRect!, tooltipWidth ?? rawWidth * scaleRatio, arrowSize, offsetX),
+              // For 'top': position anchor at target.top - gap, then shift UP by tooltip height
+              // For 'bottom': position at target.bottom + arrow + gap
+              top: position == 'top' 
+                  ? (_targetRect!.top - arrowSize - 4 + offsetY)
+                  : _calculateTooltipY(position, _targetRect!, arrowSize, offsetY),
+              child: position == 'top'
+                  // For 'top': shift entire tooltip UP by its own height using FractionalTranslation
+                  ? FractionalTranslation(
+                      translation: const Offset(0, -1), // Move up by 100% of widget height
+                      child: FadeTransition(
+                        opacity: _fadeAnimation,
+                        child: ScaleTransition(
+                          scale: _scaleAnimation,
+                          alignment: Alignment.bottomCenter,
+                          child: _buildTooltipBody(
+                            layers,
+                            position,
+                            tooltipWidth,
+                            tooltipBgColor,
+                            backgroundOpacity,
+                            borderRadius,
+                            padding,
+                            arrowEnabled,
+                            arrowSize,
+                            shadowEnabled,
+                            shadowBlur,
+                            shadowOpacity,
+                            tooltipHeight,
+                            scaleRatio, // For scaling layer content
+                          ),
+                        ),
+                      ),
+                    )
+                  // For other positions: normal positioning
+                  : FadeTransition(
+                      opacity: _fadeAnimation,
+                      child: ScaleTransition(
+                        scale: _scaleAnimation,
+                        alignment: _getScaleAlignment(position),
+                        child: _buildTooltipBody(
+                          layers,
+                          position,
+                          tooltipWidth,
+                          tooltipBgColor,
+                          backgroundOpacity,
+                          borderRadius,
+                          padding,
+                          arrowEnabled,
+                          arrowSize,
+                          shadowEnabled,
+                          shadowBlur,
+                          shadowOpacity,
+                          tooltipHeight,
+                          scaleRatio, // For scaling layer content
+                        ),
+                      ),
+                    ),
+            )
+          else
+            // Centered fallback when no target
+            Center(
               child: FadeTransition(
                 opacity: _fadeAnimation,
                 child: ScaleTransition(
                   scale: _scaleAnimation,
-                  alignment: _getScaleAlignment(position),
-                  child: Transform(
-                    transform: Matrix4.identity()
-                      ..rotateZ((config['rotate'] as num? ?? 0.0) * 3.14159 / 180)
-                      ..scale((config['scale'] as num? ?? 1.0).toDouble()),
-                    alignment: Alignment.center,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (position == 'bottom') _buildArrow(backgroundColor, ArrowDirection.up),
-                        
-                        Container(
-                          // Constraints & Sizing
-                          width: (config['width'] as num?)?.toDouble(),
-                          height: (config['height'] as num?)?.toDouble(),
-                          constraints: (config['width'] == null && config['height'] == null) 
-                              ? const BoxConstraints(maxWidth: 280) 
-                              : null,
-                          padding: padding,
-                          decoration: BoxDecoration(
-                            color: backgroundColor,
-                            borderRadius: BorderRadius.circular(roundness),
-                            boxShadow: (config['mode'] == 'image' && (config['boxShadow'] == null || config['boxShadow'] == 'none')) 
-                                ? [] 
-                                : [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.2),
-                                      blurRadius: 12,
-                                      offset: const Offset(0, 4),
-                                    ),
-                                  ],
-                             // ... Support Gradient if needed ...
-                          ),
-                          child: _buildContent(config, textColor, text, backgroundColor, roundness, paddingVal),
-                        ),
-                        
-                        if (position == 'top') _buildArrow(backgroundColor, ArrowDirection.down),
-                      ],
-                    ),
+                  child: _buildTooltipBody(
+                    layers,
+                    'bottom',
+                    tooltipWidth,
+                    tooltipBgColor,
+                    backgroundOpacity,
+                    borderRadius,
+                    padding,
+                    arrowEnabled,
+                    arrowSize,
+                    shadowEnabled,
+                    shadowBlur,
+                    shadowOpacity,
+                    tooltipHeight,
+                    scaleRatio, // For scaling layer content
                   ),
                 ),
               ),
             ),
-          ),
-
-          // Target Highlight
-          if (targetWidth > 0)
-            Positioned(
-               left: targetX - (targetWidth / 2) - 4, // 4px padding
-               top: targetY - (targetHeight / 2) - (position == 'bottom' ? targetHeight : 0) - 4, 
-               // Wait, logic for target Y is tricky because targetY depends on edge. 
-               // Let's re-calculate absolute center for highlight
-               // Actually, let's just use the original renderBox center if possible? 
-               // But we only have adjusted targetX/Y.
-               // Let's simplify:
-               child: IgnorePointer(
-                  child: Transform.translate(
-                    offset: Offset(
-                      position == 'right' ? -targetWidth : position == 'left' ? 0 : -targetWidth/2,
-                      position == 'bottom' ? -targetHeight : position == 'top' ? 0 : -targetHeight/2
-                    ),
-                    child: _buildTargetHighlight(targetWidth, targetHeight, targetShape, targetRoundness),
-                  )
-               ),
-            ),
         ],
       ),
     );
   }
 
-  Widget _buildContent(Map<String, dynamic> config, Color textColor, String text, Color btnColor, double roundness, double paddingVal) {
-     if (config['mode'] == 'html' && config['htmlContent'] != null) {
-        return HtmlWidget(config['htmlContent']);
-     }
-     
-     if (config['mode'] == 'image' && config['imageUrl'] != null) {
-        return ClipRRect(
-            borderRadius: BorderRadius.circular(roundness > paddingVal ? roundness - paddingVal : 0),
-            child: Image.network(
-               config['imageUrl'],
-               fit: BoxFit.cover,
-               width: (config['width'] as num?)?.toDouble(),
-               height: (config['height'] as num?)?.toDouble(),
-               errorBuilder: (ctx, err, stack) => const Icon(Icons.broken_image, color: Colors.white),
-            )
-        );
-     }
-
-     return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (config['title'] != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Text(
-                config['title'],
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: textColor),
+  Widget _buildTooltipBody(
+    List<dynamic> layers,
+    String position,
+    double? width, // Nullable for auto/fitContent modes
+    Color bgColor,
+    double backgroundOpacity,
+    double borderRadius,
+    double padding,
+    bool arrowEnabled,
+    double arrowSize,
+    bool shadowEnabled,
+    double shadowBlur,
+    double shadowOpacityVal,
+    double? height,
+    double scaleRatio, // NEW: For scaling layer content
+  ) {
+    // Apply opacity to bgColor
+    final effectiveBgColor = bgColor.withOpacity(backgroundOpacity);
+    
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Arrow on top (when tooltip is below target)
+        if (arrowEnabled && position == 'bottom')
+          _buildArrow(effectiveBgColor, arrowSize, ArrowDirection.up),
+        
+        // Arrow on left (when tooltip is right of target)
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            if (arrowEnabled && position == 'right')
+              _buildArrow(effectiveBgColor, arrowSize, ArrowDirection.left),
+            
+            // Main body
+            Container(
+              width: width,
+              height: height,
+              padding: EdgeInsets.all(padding),
+              decoration: BoxDecoration(
+                color: effectiveBgColor,
+                borderRadius: BorderRadius.circular(borderRadius),
+                boxShadow: shadowEnabled ? [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(shadowOpacityVal),
+                    blurRadius: shadowBlur,
+                    offset: const Offset(0, 4),
+                  ),
+                ] : null,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: _buildLayers(layers, scaleRatio),
               ),
             ),
-          Text(
-            text,
-            style: TextStyle(fontSize: 14, color: textColor.withOpacity(0.9), height: 1.4),
-          ),
-          if (config['buttonText'] != null)
-             Padding(
-                padding: const EdgeInsets.only(top: 12),
-                child: SizedBox(
-                   width: double.infinity,
-                   child: ElevatedButton(
-                      onPressed: () => _handleCTA('primary'),
-                      style: ElevatedButton.styleFrom(
-                         backgroundColor: textColor,
-                         foregroundColor: btnColor,
-                         padding: const EdgeInsets.symmetric(vertical: 10),
-                      ),
-                      child: Text(config['buttonText'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                   ),
-                ),
-             ),
-        ],
-     );
+            
+            if (arrowEnabled && position == 'left')
+              _buildArrow(effectiveBgColor, arrowSize, ArrowDirection.right),
+          ],
+        ),
+        
+        // Arrow on bottom (when tooltip is above target)
+        if (arrowEnabled && position == 'top')
+          _buildArrow(effectiveBgColor, arrowSize, ArrowDirection.down),
+      ],
+    );
   }
 
-  // HELPER METHODS
-
-  Color? _parseColor(dynamic color) {
-    if (color is Color) return color;
-    if (color is int) return Color(color);
-    if (color is String) {
-      if (color.isEmpty || color == 'transparent') return Colors.transparent;
-      try {
-        var hex = color.replaceAll('#', '');
-        if (hex.length == 6) hex = 'FF$hex';
-        return Color(int.parse('0x$hex'));
-      } catch (e) {
-        return null;
+  List<Widget> _buildLayers(List<dynamic> layers, double scaleRatio) {
+    if (layers.isEmpty) {
+      // Default content with scaled font
+      return [
+        Text(
+          'Tooltip Content',
+          style: TextStyle(color: Colors.white, fontSize: 14 * scaleRatio),
+        ),
+      ];
+    }
+    
+    // 🔥 DEBUG: Print layer info
+    debugPrint('🎨 Building ${layers.length} layers (scaleRatio: $scaleRatio)...');
+    
+    final widgets = <Widget>[];
+    
+    for (final layerData in layers) {
+      final layer = layerData as Map<String, dynamic>;
+      final type = layer['type']?.toString() ?? 'text';
+      final content = layer['content'] as Map<String, dynamic>? ?? {};
+      final style = layer['style'] as Map<String, dynamic>? ?? {};
+      
+      debugPrint('  → Layer type: $type');
+      debugPrint('    Content keys: ${content.keys.toList()}');
+      
+      // Skip layers with no content or container types
+      if (content.isEmpty && type == 'text') {
+        debugPrint('    ⚠️ Skipping empty text layer');
+        continue;
+      }
+      
+      Widget? widget;
+      switch (type) {
+        case 'text':
+          widget = _buildTextLayer(content, style, scaleRatio);
+          break;
+        case 'button':
+          widget = _buildButtonLayer(content, style, scaleRatio);
+          break;
+        case 'image':
+        case 'media':
+          widget = _buildImageLayer(content, style, scaleRatio);
+          break;
+        default:
+          debugPrint('    ⚠️ Unknown layer type: $type');
+          break;
+      }
+      
+      if (widget != null) {
+        widgets.add(widget);
       }
     }
-    return null;
+    
+    return widgets.isNotEmpty ? widgets : [
+      Text(
+        'No renderable layers',
+        style: TextStyle(color: Colors.white70, fontSize: 12 * scaleRatio),
+      ),
+    ];
+  }
+
+  Widget _buildTextLayer(Map<String, dynamic> content, Map<String, dynamic> style, double scaleRatio) {
+    final text = content['text']?.toString() ?? '';
+    final rawFontSize = (content['fontSize'] as num?)?.toDouble() ?? 14;
+    final fontSize = rawFontSize * scaleRatio; // SCALE fontSize!
+    final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.white;
+    final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']);
+    
+    return Padding(
+      padding: EdgeInsets.only(bottom: 8 * scaleRatio), // SCALE padding!
+      child: Text(
+        text,
+        style: TextStyle(
+          color: textColor,
+          fontSize: fontSize,
+          fontWeight: fontWeight,
+          height: 1.4,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildButtonLayer(Map<String, dynamic> content, Map<String, dynamic> style, double scaleRatio) {
+    final label = content['label']?.toString() ?? 'Button';
+    final bgColor = NinjaLayerUtils.parseColor(style['backgroundColor']) ?? Colors.blue;
+    final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.white;
+    final rawFontSize = (content['fontSize'] as num?)?.toDouble() ?? 14;
+    final fontSize = rawFontSize * scaleRatio;
+    final action = content['action'] as Map<String, dynamic>?;
+    
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: () {
+          if (action != null) {
+            final actionType = action['type']?.toString() ?? 'dismiss';
+            _handleAction(actionType, action);
+          } else {
+            _handleDismiss();
+          }
+        },
+        style: ElevatedButton.styleFrom(
+          backgroundColor: bgColor,
+          foregroundColor: textColor,
+          padding: EdgeInsets.symmetric(vertical: 12 * scaleRatio), // SCALED!
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8 * scaleRatio), // SCALED!
+          ),
+        ),
+        child: Text(label, style: TextStyle(fontSize: fontSize)), // SCALED!
+      ),
+    );
+  }
+
+  Widget _buildImageLayer(Map<String, dynamic> content, Map<String, dynamic> style, double scaleRatio) {
+    final imageUrl = content['imageUrl']?.toString() ?? content['url']?.toString();
+    final rawWidth = (style['width'] as num?)?.toDouble();
+    final rawHeight = (style['height'] as num?)?.toDouble();
+    // SCALE image dimensions!
+    final width = rawWidth != null ? rawWidth * scaleRatio : null;
+    final height = rawHeight != null ? rawHeight * scaleRatio : null;
+    
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8 * scaleRatio), // SCALED!
+      child: Image.network(
+        imageUrl,
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white),
+      ),
+    );
+  }
+
+  Widget _buildArrow(Color color, double size, ArrowDirection direction, {double roundness = 0}) {
+    return CustomPaint(
+      size: Size(size * 2, size),
+      painter: _ArrowPainter(color: color, direction: direction, roundness: roundness),
+    );
+  }
+
+  double _calculateTooltipX(String position, Rect target, double tooltipWidth, double arrowSize, double offset) {
+    switch (position) {
+      case 'left':
+        return target.left - tooltipWidth - arrowSize - 4 + offset;
+      case 'right':
+        return target.right + arrowSize + 4 + offset;
+      default: // top, bottom
+        return target.center.dx - tooltipWidth / 2 + offset;
+    }
+  }
+
+  double _calculateTooltipY(String position, Rect target, double arrowSize, double offset) {
+    switch (position) {
+      case 'top':
+        return target.top - arrowSize - 4 + offset;
+      case 'bottom':
+        return target.bottom + arrowSize + 4 + offset;
+      default: // left, right
+        return target.center.dy + offset;
+    }
   }
 
   Alignment _getScaleAlignment(String position) {
-      switch (position) {
-        case 'top': return Alignment.bottomCenter;
-        case 'bottom': return Alignment.topCenter;
-        case 'left': return Alignment.centerRight;
-        case 'right': return Alignment.centerLeft;
-        default: return Alignment.center;
-      }
+    switch (position) {
+      case 'top':
+        return Alignment.bottomCenter;
+      case 'bottom':
+        return Alignment.topCenter;
+      case 'left':
+        return Alignment.centerRight;
+      case 'right':
+        return Alignment.centerLeft;
+      default:
+        return Alignment.center;
+    }
   }
-
-  Widget _buildTargetHighlight(double width, double height, BoxShape shape, double roundness) {
-      return Container(
-         width: width + 8,
-         height: height + 8,
-         decoration: BoxDecoration(
-           shape: shape,
-           borderRadius: shape == BoxShape.rectangle ? BorderRadius.circular(roundness) : null,
-           border: Border.all(color: Colors.white.withOpacity(0.5), width: 2),
-           boxShadow: [
-             BoxShadow(color: Colors.white.withOpacity(0.3), blurRadius: 8, spreadRadius: 2),
-           ]
-         ),
-      );
-  }
-
-  Widget _buildArrow(Color color, ArrowDirection direction) {
-    // If gradient is used, try to match the gradient start/end color based on direction, 
-    // or just use a solid approximation. For simplified "Brand of the Day", solid color usually works or main color.
-    return CustomPaint(
-      size: const Size(20, 10), // Slightly larger for bubble
-      painter: _ArrowPainter(
-        color: color, 
-        direction: direction,
-        isBubble: widget.campaign.config['arrowStyle'] == 'bubble',
-      ),
-    );
-  }
-// ... (rest of class)
 }
 
+// ============ SPOTLIGHT PAINTER ============
+class _SpotlightPainter extends CustomPainter {
+  final Rect targetRect;
+  final Color overlayColor;
+  final double targetBorderRadius;
+  final Color targetBorderColor;
+  final double targetBorderWidth;
+
+  _SpotlightPainter({
+    required this.targetRect,
+    required this.overlayColor,
+    required this.targetBorderRadius,
+    required this.targetBorderColor,
+    required this.targetBorderWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Full screen overlay
+    final overlayPaint = Paint()..color = overlayColor;
+    
+    // Cutout path
+    final fullRect = Rect.fromLTWH(0, 0, size.width, size.height);
+    final cutoutRect = RRect.fromRectAndRadius(
+      targetRect.inflate(4), // Small padding
+      Radius.circular(targetBorderRadius),
+    );
+    
+    // Draw overlay with cutout
+    final path = Path()
+      ..addRect(fullRect)
+      ..addRRect(cutoutRect);
+    path.fillType = PathFillType.evenOdd;
+    
+    canvas.drawPath(path, overlayPaint);
+    
+    // Draw target border
+    final borderPaint = Paint()
+      ..color = targetBorderColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = targetBorderWidth;
+    
+    canvas.drawRRect(cutoutRect, borderPaint);
+  }
+
+  @override
+  bool shouldRepaint(_SpotlightPainter oldDelegate) =>
+      targetRect != oldDelegate.targetRect ||
+      overlayColor != oldDelegate.overlayColor;
+}
+
+// ============ ARROW PAINTER (with roundness support) ============
 enum ArrowDirection { up, down, left, right }
 
 class _ArrowPainter extends CustomPainter {
   final Color color;
   final ArrowDirection direction;
-  final bool isBubble;
+  final double roundness; // 0-100, 0 = sharp, 100 = very rounded
+  final double positionPercent; // 0-100, position along edge
 
-  _ArrowPainter({required this.color, required this.direction, this.isBubble = false});
+  _ArrowPainter({
+    required this.color, 
+    required this.direction,
+    this.roundness = 0,
+    this.positionPercent = 50,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -370,55 +718,62 @@ class _ArrowPainter extends CustomPainter {
       ..style = PaintingStyle.fill;
 
     final path = Path();
+    // tipOffset applies curve at the TIP, not the base
+    final tipOffset = (roundness / 100) * (size.height * 0.6);
     
-    if (isBubble) {
-      // Curved "Speech Bubble" Arrow
-      switch (direction) {
-        case ArrowDirection.up:
-          path.moveTo(0, size.height); 
-          path.quadraticBezierTo(size.width * 0.2, size.height, size.width * 0.5, 0);
-          path.quadraticBezierTo(size.width * 0.8, size.height, size.width, size.height);
-          break;
-        case ArrowDirection.down:
-           path.moveTo(0, 0);
-           path.quadraticBezierTo(size.width * 0.2, 0, size.width * 0.5, size.height);
-           path.quadraticBezierTo(size.width * 0.8, 0, size.width, 0);
-          break;
-        case ArrowDirection.left:
-           path.moveTo(size.width, 0);
-           path.quadraticBezierTo(size.width, size.height * 0.2, 0, size.height * 0.5);
-           path.quadraticBezierTo(size.width, size.height * 0.8, size.width, size.height);
-          break;
-        case ArrowDirection.right:
-           path.moveTo(0, 0);
-           path.quadraticBezierTo(0, size.height * 0.2, size.width, size.height * 0.5);
-           path.quadraticBezierTo(0, size.height * 0.8, 0, size.height);
-          break;
-      }
-    } else {
-      // Triangle Arrow (Standard)
-      switch (direction) {
-        case ArrowDirection.up:
-          path.moveTo(size.width / 2, 0);
-          path.lineTo(0, size.height);
+    switch (direction) {
+      case ArrowDirection.up:
+        // Arrow pointing UP - curve the TOP tip
+        if (tipOffset > 0) {
+          path.moveTo(0, size.height);
+          path.lineTo(size.width / 2 - tipOffset, tipOffset);
+          path.quadraticBezierTo(size.width / 2, -tipOffset * 0.5, size.width / 2 + tipOffset, tipOffset);
           path.lineTo(size.width, size.height);
-          break;
-        case ArrowDirection.down:
+        } else {
+          path.moveTo(0, size.height);
+          path.lineTo(size.width / 2, 0);
+          path.lineTo(size.width, size.height);
+        }
+        break;
+      case ArrowDirection.down:
+        // Arrow pointing DOWN - curve the BOTTOM tip
+        if (tipOffset > 0) {
           path.moveTo(0, 0);
+          path.lineTo(size.width / 2 - tipOffset, size.height - tipOffset);
+          path.quadraticBezierTo(size.width / 2, size.height + tipOffset * 0.5, size.width / 2 + tipOffset, size.height - tipOffset);
           path.lineTo(size.width, 0);
+        } else {
+          path.moveTo(0, 0);
           path.lineTo(size.width / 2, size.height);
-          break;
-        case ArrowDirection.left:
-          path.moveTo(0, size.height / 2);
           path.lineTo(size.width, 0);
+        }
+        break;
+      case ArrowDirection.left:
+        // Arrow pointing LEFT - curve the LEFT tip
+        if (tipOffset > 0) {
+          path.moveTo(size.width, 0);
+          path.lineTo(tipOffset, size.height / 2 - tipOffset);
+          path.quadraticBezierTo(-tipOffset * 0.5, size.height / 2, tipOffset, size.height / 2 + tipOffset);
           path.lineTo(size.width, size.height);
-          break;
-        case ArrowDirection.right:
+        } else {
+          path.moveTo(size.width, 0);
+          path.lineTo(0, size.height / 2);
+          path.lineTo(size.width, size.height);
+        }
+        break;
+      case ArrowDirection.right:
+        // Arrow pointing RIGHT - curve the RIGHT tip
+        if (tipOffset > 0) {
+          path.moveTo(0, 0);
+          path.lineTo(size.width - tipOffset, size.height / 2 - tipOffset);
+          path.quadraticBezierTo(size.width + tipOffset * 0.5, size.height / 2, size.width - tipOffset, size.height / 2 + tipOffset);
+          path.lineTo(0, size.height);
+        } else {
           path.moveTo(0, 0);
           path.lineTo(size.width, size.height / 2);
           path.lineTo(0, size.height);
-          break;
-      }
+        }
+        break;
     }
     
     path.close();
@@ -426,8 +781,9 @@ class _ArrowPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ArrowPainter oldDelegate) => 
-      oldDelegate.color != color || 
-      oldDelegate.direction != direction ||
-      oldDelegate.isBubble != isBubble;
+  bool shouldRepaint(_ArrowPainter oldDelegate) =>
+      color != oldDelegate.color || 
+      direction != oldDelegate.direction ||
+      roundness != oldDelegate.roundness ||
+      positionPercent != oldDelegate.positionPercent;
 }
