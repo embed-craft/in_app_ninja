@@ -683,16 +683,20 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
 
   Widget _buildTextLayer(Map<String, dynamic> content, Map<String, dynamic> style, double scaleRatio) {
     final text = content['text']?.toString() ?? '';
-    final rawFontSize = (content['fontSize'] as num?)?.toDouble() ?? 14;
+    // FIX: Handle both String and num types for fontSize
+    final fontSizeVal = content['fontSize'];
+    final rawFontSize = fontSizeVal is num ? fontSizeVal.toDouble() : (double.tryParse(fontSizeVal?.toString() ?? '') ?? 14);
     final fontSize = rawFontSize * scaleRatio; // SCALE fontSize!
     final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.white;
     final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']);
     // FIX: Add fontFamily support - was missing!
     final fontFamily = content['fontFamily']?.toString();
-    // FIX: Read lineHeight from content instead of hardcoded 1.4
-    final lineHeight = (content['lineHeight'] as num?)?.toDouble() ?? 1.4;
-    // FIX: Read marginBottom from style instead of hardcoded 8
-    final rawMarginBottom = (style['marginBottom'] as num?)?.toDouble() ?? 0;
+    // FIX: Read lineHeight from content, handle both String and num types
+    final lineHeightVal = content['lineHeight'];
+    final lineHeight = lineHeightVal is num ? lineHeightVal.toDouble() : (double.tryParse(lineHeightVal?.toString() ?? '') ?? 1.4);
+    // FIX: Read marginBottom from style, handle both String and num types
+    final marginBottomVal = style['marginBottom'];
+    final rawMarginBottom = marginBottomVal is num ? marginBottomVal.toDouble() : (double.tryParse(marginBottomVal?.toString() ?? '') ?? 0);
     final marginBottom = rawMarginBottom * scaleRatio;
     
     return Padding(
@@ -719,7 +723,9 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final label = content['label']?.toString() ?? 'Button';
     final bgColor = NinjaLayerUtils.parseColor(style['backgroundColor']) ?? Colors.blue;
     final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.white;
-    final rawFontSize = (content['fontSize'] as num?)?.toDouble() ?? 14;
+    // FIX: Handle both String and num types for fontSize
+    final fontSizeVal = content['fontSize'];
+    final rawFontSize = fontSizeVal is num ? fontSizeVal.toDouble() : (double.tryParse(fontSizeVal?.toString() ?? '') ?? 14);
     final fontSize = rawFontSize * scaleRatio;
     final action = content['action'] as Map<String, dynamic>?;
     // FIX: Add fontFamily support - check both content and style
@@ -728,14 +734,19 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']) 
                        ?? NinjaLayerUtils.parseFontWeight(style['fontWeight'])
                        ?? FontWeight.w600;
-    // FIX: Read borderRadius from style (default 8)
-    final rawBorderRadius = (style['borderRadius'] as num?)?.toDouble() ?? 8;
+    // FIX: Read borderRadius from style, handle both String and num types
+    final borderRadiusVal = style['borderRadius'];
+    final rawBorderRadius = borderRadiusVal is num ? borderRadiusVal.toDouble() : (double.tryParse(borderRadiusVal?.toString() ?? '') ?? 8);
     final borderRadius = rawBorderRadius * scaleRatio;
-    // FIX: Read custom padding from style
-    final rawPaddingTop = (style['paddingTop'] as num?)?.toDouble() ?? 12;
-    final rawPaddingRight = (style['paddingRight'] as num?)?.toDouble() ?? 16;
-    final rawPaddingBottom = (style['paddingBottom'] as num?)?.toDouble() ?? 12;
-    final rawPaddingLeft = (style['paddingLeft'] as num?)?.toDouble() ?? 16;
+    // FIX: Read custom padding from style, handle both String and num types
+    final paddingTopVal = style['paddingTop'];
+    final paddingRightVal = style['paddingRight'];
+    final paddingBottomVal = style['paddingBottom'];
+    final paddingLeftVal = style['paddingLeft'];
+    final rawPaddingTop = paddingTopVal is num ? paddingTopVal.toDouble() : (double.tryParse(paddingTopVal?.toString() ?? '') ?? 12);
+    final rawPaddingRight = paddingRightVal is num ? paddingRightVal.toDouble() : (double.tryParse(paddingRightVal?.toString() ?? '') ?? 16);
+    final rawPaddingBottom = paddingBottomVal is num ? paddingBottomVal.toDouble() : (double.tryParse(paddingBottomVal?.toString() ?? '') ?? 12);
+    final rawPaddingLeft = paddingLeftVal is num ? paddingLeftVal.toDouble() : (double.tryParse(paddingLeftVal?.toString() ?? '') ?? 16);
     
     return ElevatedButton(
       onPressed: () {
@@ -768,13 +779,17 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
 
   Widget _buildImageLayer(Map<String, dynamic> content, Map<String, dynamic> style, double scaleRatio) {
     final imageUrl = content['imageUrl']?.toString() ?? content['url']?.toString();
-    final rawWidth = (style['width'] as num?)?.toDouble();
-    final rawHeight = (style['height'] as num?)?.toDouble();
+    // FIX: Handle both String and num types for width/height
+    final rawWidthVal = style['width'];
+    final rawHeightVal = style['height'];
+    final rawWidth = rawWidthVal is num ? rawWidthVal.toDouble() : double.tryParse(rawWidthVal?.toString() ?? '');
+    final rawHeight = rawHeightVal is num ? rawHeightVal.toDouble() : double.tryParse(rawHeightVal?.toString() ?? '');
     // SCALE image dimensions!
     final width = rawWidth != null ? rawWidth * scaleRatio : null;
     final height = rawHeight != null ? rawHeight * scaleRatio : null;
-    // FIX: Read borderRadius from style instead of hardcoded 8
-    final rawBorderRadius = (style['borderRadius'] as num?)?.toDouble() ?? 0;
+    // FIX: Read borderRadius from style, handle both String and num types
+    final rawBorderRadiusVal = style['borderRadius'];
+    final rawBorderRadius = rawBorderRadiusVal is num ? rawBorderRadiusVal.toDouble() : (double.tryParse(rawBorderRadiusVal?.toString() ?? '') ?? 0);
     final borderRadius = rawBorderRadius * scaleRatio;
     // FIX: Read objectFit from style (default 'contain' to match Dashboard)
     final objectFitStr = style['objectFit']?.toString() ?? 'contain';
@@ -805,26 +820,25 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     );
   }
 
-  // FIX: Added scaled gap constant for pixel-perfect positioning
+  // FIX: Removed hardcoded gap constant - Dashboard doesn't have this
   double _calculateTooltipX(String position, Rect target, double tooltipWidth, double arrowSize, double offset, double scaleRatio) {
-    final scaledGapConstant = 4 * scaleRatio; // Scale the constant gap
     switch (position) {
       case 'left':
-        return target.left - tooltipWidth - arrowSize - scaledGapConstant + offset;
+        return target.left - tooltipWidth - arrowSize + offset;
       case 'right':
-        return target.right + arrowSize + scaledGapConstant + offset;
+        return target.right + arrowSize + offset;
       default: // top, bottom
         return target.center.dx - tooltipWidth / 2 + offset;
     }
   }
 
   double _calculateTooltipY(String position, Rect target, double arrowSize, double offset, double scaleRatio) {
-    final scaledGapConstant = 4 * scaleRatio; // Scale the constant gap
+    // FIX: Removed hardcoded 4px gap constant - Dashboard doesn't have this
     switch (position) {
       case 'top':
-        return target.top - arrowSize - scaledGapConstant + offset;
+        return target.top - arrowSize + offset;
       case 'bottom':
-        return target.bottom + arrowSize + scaledGapConstant + offset;
+        return target.bottom + arrowSize + offset;
       default: // left, right
         return target.center.dy + offset;
     }
