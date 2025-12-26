@@ -253,7 +253,7 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     // SCALE borderRadius and padding!
     final rawBorderRadius = (tooltipConfig['borderRadius'] as num?)?.toDouble() ?? 12;
     final borderRadius = rawBorderRadius * scaleRatio;
-    final rawPadding = (tooltipConfig['padding'] as num?)?.toDouble() ?? 16;
+    final rawPadding = (tooltipConfig['padding'] as num?)?.toDouble() ?? 0;
     final padding = rawPadding * scaleRatio;
     
     // Height (optional)
@@ -350,12 +350,11 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
             Positioned(
               // Use rawWidth for positioning (always available), but tooltipWidth for rendering
               left: _calculateTooltipX(position, _targetRect!, tooltipWidth ?? rawWidth * scaleRatio, arrowSize, offsetX, scaleRatio),
-              // For 'top': position anchor at target.top - gap, then shift UP by tooltip height
-              // For 'bottom': position at target.bottom + arrow + gap
-              // FIX: Scale the constant gap (4px) for pixel-perfect positioning
+              // For 'top': position anchor at target.top, then shift UP by tooltip height
+              // FIX: No gap - arrow should touch target directly when offsetY=0
               top: position == 'top' 
-                  ? (_targetRect!.top - arrowSize - (4 * scaleRatio) + offsetY)
-                  : _calculateTooltipY(position, _targetRect!, arrowSize, offsetY, scaleRatio),
+                  ? (_targetRect!.top + offsetY)
+                  : _calculateTooltipY(position, _targetRect!, 0, offsetY, scaleRatio),
               child: position == 'top'
                   // For 'top': shift entire tooltip UP by its own height using FractionalTranslation
                   ? FractionalTranslation(
@@ -384,6 +383,8 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                             shadowOffsetY,
                             tooltipHeight,
                             scaleRatio,
+                            backgroundImageUrl, // FIX: Pass background image
+                            backgroundSize,
                           ),
                         ),
                       ),
@@ -413,6 +414,8 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                           shadowOffsetY,
                           tooltipHeight,
                           scaleRatio,
+                          backgroundImageUrl, // FIX: Pass background image
+                          backgroundSize,
                         ),
                       ),
                     ),
@@ -443,6 +446,8 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                     shadowOffsetY,
                     tooltipHeight,
                     scaleRatio,
+                    backgroundImageUrl, // FIX: Pass background image
+                    backgroundSize,
                   ),
                 ),
               ),
@@ -471,9 +476,20 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     double shadowOffsetY,
     double? height,
     double scaleRatio, // For scaling layer content
+    String? backgroundImageUrl, // FIX: Add background image support
+    String backgroundSize, // FIX: Add background size (cover, contain, etc)
   ) {
     // Apply opacity to bgColor
     final effectiveBgColor = bgColor.withOpacity(backgroundOpacity);
+    
+    // FIX: Calculate effective dimensions for absolute positioning
+    final effectiveWidth = (width ?? 280 * scaleRatio) - padding * 2;
+    final effectiveHeight = (height ?? 100 * scaleRatio) - padding * 2;
+    
+    // FIX: Parse background size to BoxFit
+    final backgroundFit = backgroundSize == 'contain' ? BoxFit.contain
+                        : backgroundSize == 'fill' ? BoxFit.fill
+                        : BoxFit.cover; // Default to cover
     
     // Build the main tooltip container with clipping to prevent overflow
     final tooltipContainer = ClipRRect(
@@ -481,11 +497,19 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       clipBehavior: Clip.hardEdge, // Clip any overflowing content
       child: Container(
         width: width,
-        height: height,
+        // FIX: Use explicit height or calculated height for Stack children
+        height: height ?? (effectiveHeight + padding * 2),
         padding: EdgeInsets.all(padding),
         decoration: BoxDecoration(
           color: effectiveBgColor,
           borderRadius: BorderRadius.circular(borderRadius),
+          // FIX: Add background image support
+          image: backgroundImageUrl != null && backgroundImageUrl.isNotEmpty
+            ? DecorationImage(
+                image: NetworkImage(backgroundImageUrl),
+                fit: backgroundFit,
+              )
+            : null,
           boxShadow: shadowEnabled ? [
             BoxShadow(
               color: Colors.black.withOpacity(shadowOpacityVal),
@@ -494,10 +518,19 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
             ),
           ] : null,
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: _buildLayers(layers, scaleRatio),
+        // FIX: Use Stack with absolute positioned layers (matching Dashboard)
+        child: SizedBox(
+          width: effectiveWidth,
+          height: effectiveHeight,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: _buildAbsolutePositionedLayers(
+              layers, 
+              scaleRatio, 
+              effectiveWidth,
+              effectiveHeight,
+            ),
+          ),
         ),
       ),
     );
@@ -618,6 +651,292 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       case 'right': return ArrowDirection.left;
       default: return ArrowDirection.down;
     }
+  }
+
+  // ============ ABSOLUTE POSITIONING (Matching Dashboard) ============
+  
+  /// Parse dynamic value to double, handling String (with unit suffixes) and num types
+  double? _parseDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    // Strip common unit suffixes (px, %, pt, em, rem)
+    String strVal = value.toString().trim().toLowerCase();
+    if (strVal.isEmpty) return null;
+    strVal = strVal
+        .replaceAll('px', '')
+        .replaceAll('%', '')
+        .replaceAll('pt', '')
+        .replaceAll('em', '')
+        .replaceAll('rem', '')
+        .trim();
+    return double.tryParse(strVal);
+  }
+
+  /// Build layers with absolute positioning (matching Dashboard renderLayerAbsolute)
+  List<Widget> _buildAbsolutePositionedLayers(
+    List<dynamic> layers, 
+    double scaleRatio, 
+    double tooltipWidth, 
+    double tooltipHeight,
+  ) {
+    const designWidth = 393.0;
+    const designHeight = 852.0;
+    
+    if (layers.isEmpty) {
+      return [
+        Positioned(
+          left: 0,
+          top: 0,
+          child: Text(
+            'Tooltip Content',
+            style: TextStyle(color: Colors.white, fontSize: 14 * scaleRatio),
+          ),
+        ),
+      ];
+    }
+    
+    debugPrint('🎨 Building ${layers.length} absolute positioned layers...');
+    
+    // Sort by zIndex (lower = behind)
+    final sortedLayers = layers.cast<Map<String, dynamic>>().toList()
+      ..sort((a, b) {
+        final zA = (_parseDouble(a['style']?['zIndex']) ?? 0).toInt();
+        final zB = (_parseDouble(b['style']?['zIndex']) ?? 0).toInt();
+        return zA.compareTo(zB);
+      });
+    
+    final widgets = <Widget>[];
+    
+    for (final layer in sortedLayers) {
+      final type = layer['type']?.toString() ?? 'text';
+      final content = layer['content'] as Map<String, dynamic>? ?? {};
+      final style = layer['style'] as Map<String, dynamic>? ?? {};
+      final visible = layer['visible'] as bool? ?? true;
+      
+      if (!visible) continue;
+      if (type == 'text' && (content['text']?.toString().isEmpty ?? true)) continue;
+      
+      debugPrint('  → Layer type: $type, style keys: ${style.keys.toList()}');
+      debugPrint('    Raw width: ${style['width']} (${style['width'].runtimeType}), height: ${style['height']} (${style['height'].runtimeType})');
+      
+      // Build layer content
+      Widget? child;
+      switch (type) {
+        case 'text':
+          child = _buildTextLayerContent(content, style, scaleRatio);
+          break;
+        case 'button':
+          child = _buildButtonLayerContent(content, style, scaleRatio);
+          break;
+        case 'image':
+        case 'media':
+          child = _buildImageLayerContent(content, style, scaleRatio);
+          break;
+        default:
+          debugPrint('    ⚠️ Unknown layer type: $type');
+          continue;
+      }
+      
+      if (child == null) continue;
+      
+      // Position calculation - match Dashboard's toPercentX/Y approach
+      // Dashboard: left = (rawLeft / 393) * 100% → CSS applies percentage to container
+      // SDK: We calculate the equivalent pixel position within the tooltip
+      final rawLeft = _parseDouble(style['left'] ?? style['x']) ?? 0;
+      final rawTop = _parseDouble(style['top'] ?? style['y']) ?? 0;
+      // Convert from design coordinates to tooltip coordinates
+      final left = (rawLeft / designWidth) * tooltipWidth;
+      final top = (rawTop / designHeight) * tooltipHeight;
+      
+      // Dimension calculation - try multiple sources
+      // Style might store dimensions as numbers, strings, or in a 'size' sub-object
+      final sizeObj = style['size'] as Map<String, dynamic>?;
+      final rawWidth = _parseDouble(style['width']) ?? _parseDouble(sizeObj?['width']);
+      final rawHeight = _parseDouble(style['height']) ?? _parseDouble(sizeObj?['height']);
+      final widthUnit = style['widthUnit']?.toString() ?? 'px';
+      final heightUnit = style['heightUnit']?.toString() ?? 'px';
+      
+      double? width;
+      if (rawWidth != null) {
+        width = widthUnit == '%' 
+          ? (rawWidth / 100) * tooltipWidth 
+          : rawWidth * scaleRatio;
+      } else {
+        // FIX: Default width for layers without explicit dimensions
+        // For images/media, use full container width; for text/button, let them auto-size
+        if (type == 'image' || type == 'media') {
+          width = tooltipWidth; // Default to container width
+        }
+      }
+      
+      double? height;
+      if (rawHeight != null) {
+        height = heightUnit == '%'
+          ? (rawHeight / 100) * tooltipHeight
+          : rawHeight * scaleRatio;
+      } else {
+        // FIX: Default height for layers without explicit dimensions
+        if (type == 'image' || type == 'media') {
+          height = 100 * scaleRatio; // Default to 100px scaled
+        }
+      }
+      
+      debugPrint('    📍 Position: left=$left, top=$top, width=$width, height=$height');
+      
+      widgets.add(Positioned(
+        left: left,
+        top: top,
+        width: width,
+        height: height,
+        child: child,
+      ));
+    }
+    
+    return widgets.isNotEmpty ? widgets : [
+      Positioned(
+        left: 0,
+        top: 0,
+        child: Text(
+          'No renderable layers',
+          style: TextStyle(color: Colors.white70, fontSize: 12 * scaleRatio),
+        ),
+      ),
+    ];
+  }
+
+  // ============ LAYER CONTENT BUILDERS (No positioning, just content) ============
+  
+  Widget _buildTextLayerContent(Map<String, dynamic> content, Map<String, dynamic> style, double scaleRatio) {
+    final text = content['text']?.toString() ?? '';
+    final fontSizeVal = content['fontSize'];
+    final rawFontSize = fontSizeVal is num ? fontSizeVal.toDouble() : (double.tryParse(fontSizeVal?.toString() ?? '') ?? 14);
+    final fontSize = rawFontSize * scaleRatio;
+    final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.white;
+    final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']);
+    final fontFamily = content['fontFamily']?.toString();
+    final lineHeightVal = content['lineHeight'];
+    final lineHeight = lineHeightVal is num ? lineHeightVal.toDouble() : (double.tryParse(lineHeightVal?.toString() ?? '') ?? 1.4);
+    // FIX: Add textAlign support to match Dashboard TextRenderer
+    final textAlignStr = content['textAlign']?.toString() ?? 'left';
+    final textAlign = textAlignStr == 'center' ? TextAlign.center
+                    : textAlignStr == 'right' ? TextAlign.right
+                    : textAlignStr == 'justify' ? TextAlign.justify
+                    : TextAlign.left;
+    
+    // FIX: Add text shadow support with proper scaling
+    final rawShadowX = _parseDouble(content['textShadowX']) ?? 0;
+    final rawShadowY = _parseDouble(content['textShadowY']) ?? 0;
+    final rawShadowBlur = _parseDouble(content['textShadowBlur']) ?? 0;
+    final shadowColor = NinjaLayerUtils.parseColor(content['textShadowColor']) ?? Colors.black;
+    final hasShadow = rawShadowX != 0 || rawShadowY != 0 || rawShadowBlur != 0;
+    
+    // Scale shadow values
+    final shadowX = rawShadowX * scaleRatio;
+    final shadowY = rawShadowY * scaleRatio;
+    final shadowBlur = rawShadowBlur * scaleRatio;
+    
+    return Text(
+      text,
+      softWrap: true,
+      textAlign: textAlign,
+      style: TextStyle(
+        color: textColor,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        fontFamily: fontFamily,
+        height: lineHeight,
+        // FIX: Apply text shadow with scaling
+        shadows: hasShadow ? [
+          Shadow(
+            offset: Offset(shadowX, shadowY),
+            blurRadius: shadowBlur,
+            color: shadowColor,
+          ),
+        ] : null,
+      ),
+    );
+  }
+
+  Widget _buildButtonLayerContent(Map<String, dynamic> content, Map<String, dynamic> style, double scaleRatio) {
+    final label = content['label']?.toString() ?? 'Button';
+    // FIX: Match Dashboard - prioritize style.backgroundColor, fallback to content.themeColor
+    final bgColor = NinjaLayerUtils.parseColor(style['backgroundColor']) 
+                    ?? NinjaLayerUtils.parseColor(content['themeColor'])
+                    ?? Colors.blue;
+    final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.white;
+    final fontSizeVal = content['fontSize'];
+    final rawFontSize = fontSizeVal is num ? fontSizeVal.toDouble() : (double.tryParse(fontSizeVal?.toString() ?? '') ?? 14);
+    final fontSize = rawFontSize * scaleRatio;
+    final action = content['action'] as Map<String, dynamic>?;
+    final fontFamily = content['fontFamily']?.toString() ?? style['fontFamily']?.toString();
+    final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']) 
+                       ?? NinjaLayerUtils.parseFontWeight(style['fontWeight'])
+                       ?? FontWeight.w600;
+    final borderRadiusVal = style['borderRadius'];
+    final rawBorderRadius = borderRadiusVal is num ? borderRadiusVal.toDouble() : (double.tryParse(borderRadiusVal?.toString() ?? '') ?? 8);
+    final borderRadius = rawBorderRadius * scaleRatio;
+    final paddingTopVal = style['paddingTop'];
+    final paddingRightVal = style['paddingRight'];
+    final paddingBottomVal = style['paddingBottom'];
+    final paddingLeftVal = style['paddingLeft'];
+    final rawPaddingTop = paddingTopVal is num ? paddingTopVal.toDouble() : (double.tryParse(paddingTopVal?.toString() ?? '') ?? 0);
+    final rawPaddingRight = paddingRightVal is num ? paddingRightVal.toDouble() : (double.tryParse(paddingRightVal?.toString() ?? '') ?? 0);
+    final rawPaddingBottom = paddingBottomVal is num ? paddingBottomVal.toDouble() : (double.tryParse(paddingBottomVal?.toString() ?? '') ?? 0);
+    final rawPaddingLeft = paddingLeftVal is num ? paddingLeftVal.toDouble() : (double.tryParse(paddingLeftVal?.toString() ?? '') ?? 0);
+    
+    return ElevatedButton(
+      onPressed: () {
+        if (action != null) {
+          final actionType = action['type']?.toString() ?? 'dismiss';
+          _handleAction(actionType, action);
+        } else {
+          _handleDismiss();
+        }
+      },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: bgColor,
+        foregroundColor: textColor,
+        // FIX: Remove minimum size constraints to allow proper sizing
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: EdgeInsets.only(
+          top: rawPaddingTop * scaleRatio,
+          right: rawPaddingRight * scaleRatio,
+          bottom: rawPaddingBottom * scaleRatio,
+          left: rawPaddingLeft * scaleRatio,
+        ),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(borderRadius),
+        ),
+      ),
+      child: Text(label, style: TextStyle(fontSize: fontSize, fontFamily: fontFamily, fontWeight: fontWeight)),
+    );
+  }
+
+  Widget _buildImageLayerContent(Map<String, dynamic> content, Map<String, dynamic> style, double scaleRatio) {
+    final imageUrl = content['imageUrl']?.toString() ?? content['url']?.toString();
+    final rawBorderRadiusVal = style['borderRadius'];
+    final rawBorderRadius = rawBorderRadiusVal is num ? rawBorderRadiusVal.toDouble() : (double.tryParse(rawBorderRadiusVal?.toString() ?? '') ?? 0);
+    final borderRadius = rawBorderRadius * scaleRatio;
+    final objectFitStr = style['objectFit']?.toString() ?? 'contain';
+    final objectFit = objectFitStr == 'cover' ? BoxFit.cover 
+                     : objectFitStr == 'fill' ? BoxFit.fill
+                     : BoxFit.contain;
+    
+    if (imageUrl == null || imageUrl.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      child: Image.network(
+        imageUrl,
+        width: double.infinity,
+        height: double.infinity,
+        fit: objectFit,
+        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white),
+      ),
+    );
   }
 
   List<Widget> _buildLayers(List<dynamic> layers, double scaleRatio) {
@@ -784,9 +1103,26 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final rawHeightVal = style['height'];
     final rawWidth = rawWidthVal is num ? rawWidthVal.toDouble() : double.tryParse(rawWidthVal?.toString() ?? '');
     final rawHeight = rawHeightVal is num ? rawHeightVal.toDouble() : double.tryParse(rawHeightVal?.toString() ?? '');
-    // SCALE image dimensions!
-    final width = rawWidth != null ? rawWidth * scaleRatio : null;
-    final height = rawHeight != null ? rawHeight * scaleRatio : null;
+    
+    // FIX: Check if width/height are percentages
+    final widthUnit = style['widthUnit']?.toString() ?? 'px';
+    final heightUnit = style['heightUnit']?.toString() ?? 'px';
+    
+    // Calculate dimensions based on unit type
+    double? width;
+    double? height;
+    bool usePercentageWidth = widthUnit == '%';
+    bool usePercentageHeight = heightUnit == '%';
+    
+    if (!usePercentageWidth && rawWidth != null) {
+      // Pixel-based: scale like other dimensions
+      width = rawWidth * scaleRatio;
+    }
+    if (!usePercentageHeight && rawHeight != null) {
+      // Pixel-based: scale like other dimensions  
+      height = rawHeight * scaleRatio;
+    }
+    
     // FIX: Read borderRadius from style, handle both String and num types
     final rawBorderRadiusVal = style['borderRadius'];
     final rawBorderRadius = rawBorderRadiusVal is num ? rawBorderRadiusVal.toDouble() : (double.tryParse(rawBorderRadiusVal?.toString() ?? '') ?? 0);
@@ -799,6 +1135,31 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     
     if (imageUrl == null || imageUrl.isEmpty) {
       return const SizedBox.shrink();
+    }
+    
+    // FIX: If using percentages, use LayoutBuilder to get parent constraints
+    if (usePercentageWidth || usePercentageHeight) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final percentWidth = usePercentageWidth && rawWidth != null
+              ? constraints.maxWidth * (rawWidth / 100)
+              : width;
+          final percentHeight = usePercentageHeight && rawHeight != null
+              ? constraints.maxHeight * (rawHeight / 100)
+              : height;
+          
+          return ClipRRect(
+            borderRadius: BorderRadius.circular(borderRadius),
+            child: Image.network(
+              imageUrl,
+              width: percentWidth,
+              height: percentHeight,
+              fit: objectFit,
+              errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white),
+            ),
+          );
+        },
+      );
     }
     
     return ClipRRect(
