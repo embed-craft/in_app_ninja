@@ -225,13 +225,18 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     
     // Position
     final position = tooltipConfig['position']?.toString() ?? 'bottom';
-    final offsetX = (tooltipConfig['offsetX'] as num?)?.toDouble() ?? 0;
-    final offsetY = (tooltipConfig['offsetY'] as num?)?.toDouble() ?? 0;
+    // FIX: Scale offsets by scaleRatio for pixel-perfect positioning across devices
+    final rawOffsetX = (tooltipConfig['offsetX'] as num?)?.toDouble() ?? 0;
+    final rawOffsetY = (tooltipConfig['offsetY'] as num?)?.toDouble() ?? 0;
+    final offsetX = rawOffsetX * scaleRatio;
+    final offsetY = rawOffsetY * scaleRatio;
     
-    // Target styling
-    final targetBorderRadius = (tooltipConfig['targetBorderRadius'] as num?)?.toDouble() ?? 8;
+    // Target styling - FIX: Scale by scaleRatio!
+    final rawTargetBorderRadius = (tooltipConfig['targetBorderRadius'] as num?)?.toDouble() ?? 8;
+    final targetBorderRadius = rawTargetBorderRadius * scaleRatio;
     final targetBorderColor = NinjaLayerUtils.parseColor(tooltipConfig['targetBorderColor']) ?? Colors.blue;
-    final targetBorderWidth = (tooltipConfig['targetBorderWidth'] as num?)?.toDouble() ?? 2;
+    final rawTargetBorderWidth = (tooltipConfig['targetBorderWidth'] as num?)?.toDouble() ?? 2;
+    final targetBorderWidth = rawTargetBorderWidth * scaleRatio;
     
     // Tooltip body - Handle widthMode like dashboard!
     final widthMode = tooltipConfig['widthMode']?.toString() ?? 'custom';
@@ -256,11 +261,16 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final rawHeight = (tooltipConfig['height'] as num?)?.toDouble();
     final tooltipHeight = heightMode == 'custom' && rawHeight != null ? rawHeight * scaleRatio : null;
     
-    // Shadow - SCALE blur!
+    // Shadow - SCALE blur and offset!
     final shadowEnabled = tooltipConfig['shadowEnabled'] != false;
     final rawShadowBlur = (tooltipConfig['shadowBlur'] as num?)?.toDouble() ?? 25;
     final shadowBlur = rawShadowBlur * scaleRatio;
     final shadowOpacity = (tooltipConfig['shadowOpacity'] as num?)?.toDouble() ?? 0.2;
+    // FIX: Read shadow offset from config instead of hardcoded (0, 4)
+    final rawShadowOffsetX = (tooltipConfig['shadowOffsetX'] as num?)?.toDouble() ?? 0;
+    final rawShadowOffsetY = (tooltipConfig['shadowOffsetY'] as num?)?.toDouble() ?? 4;
+    final shadowOffsetX = rawShadowOffsetX * scaleRatio;
+    final shadowOffsetY = rawShadowOffsetY * scaleRatio;
     
     // Arrow - SCALE size!
     final arrowEnabled = tooltipConfig['arrowEnabled'] != false;
@@ -339,12 +349,13 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
           if (_targetRect != null)
             Positioned(
               // Use rawWidth for positioning (always available), but tooltipWidth for rendering
-              left: _calculateTooltipX(position, _targetRect!, tooltipWidth ?? rawWidth * scaleRatio, arrowSize, offsetX),
+              left: _calculateTooltipX(position, _targetRect!, tooltipWidth ?? rawWidth * scaleRatio, arrowSize, offsetX, scaleRatio),
               // For 'top': position anchor at target.top - gap, then shift UP by tooltip height
               // For 'bottom': position at target.bottom + arrow + gap
+              // FIX: Scale the constant gap (4px) for pixel-perfect positioning
               top: position == 'top' 
-                  ? (_targetRect!.top - arrowSize - 4 + offsetY)
-                  : _calculateTooltipY(position, _targetRect!, arrowSize, offsetY),
+                  ? (_targetRect!.top - arrowSize - (4 * scaleRatio) + offsetY)
+                  : _calculateTooltipY(position, _targetRect!, arrowSize, offsetY, scaleRatio),
               child: position == 'top'
                   // For 'top': shift entire tooltip UP by its own height using FractionalTranslation
                   ? FractionalTranslation(
@@ -369,6 +380,8 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                             shadowEnabled,
                             shadowBlur,
                             shadowOpacity,
+                            shadowOffsetX, // FIX: Add missing params
+                            shadowOffsetY,
                             tooltipHeight,
                             scaleRatio,
                           ),
@@ -396,6 +409,8 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                           shadowEnabled,
                           shadowBlur,
                           shadowOpacity,
+                          shadowOffsetX, // FIX: Pass shadow offset
+                          shadowOffsetY,
                           tooltipHeight,
                           scaleRatio,
                         ),
@@ -424,6 +439,8 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                     shadowEnabled,
                     shadowBlur,
                     shadowOpacity,
+                    shadowOffsetX, // FIX: Pass shadow offset
+                    shadowOffsetY,
                     tooltipHeight,
                     scaleRatio,
                   ),
@@ -450,6 +467,8 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     bool shadowEnabled,
     double shadowBlur,
     double shadowOpacityVal,
+    double shadowOffsetX, // FIX: Configurable shadow offset
+    double shadowOffsetY,
     double? height,
     double scaleRatio, // For scaling layer content
   ) {
@@ -471,7 +490,7 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
             BoxShadow(
               color: Colors.black.withOpacity(shadowOpacityVal),
               blurRadius: shadowBlur,
-              offset: const Offset(0, 4),
+              offset: Offset(shadowOffsetX, shadowOffsetY), // FIX: Now configurable
             ),
           ] : null,
         ),
@@ -497,6 +516,7 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       arrowSize, 
       arrowRoundness,
       arrowPositionPercent,
+      width, // FIX: Pass width for pixel-based arrow positioning
     );
   }
 
@@ -508,14 +528,18 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     double arrowSize,
     double arrowRoundness,
     double arrowPositionPercent,
+    double? tooltipWidth, // FIX: Added for pixel-based positioning
   ) {
     // For top/bottom: arrow is positioned horizontally
     // For left/right: arrow is positioned vertically
     final isVertical = position == 'top' || position == 'bottom';
     
-    // Convert percent to alignment (-1 to 1 range)
-    // 0% = -1 (start), 50% = 0 (center), 100% = 1 (end)
-    final alignmentValue = (arrowPositionPercent / 50) - 1;
+    // FIX: Convert percentage to pixels for consistent Dashboard/SDK positioning
+    // arrowPositionPx = (percent / 100) * width, centered with arrow width
+    final effectiveWidth = tooltipWidth ?? 280;
+    final arrowPositionPx = (arrowPositionPercent / 100) * effectiveWidth;
+    // Offset to center the arrow at this position (arrow width is arrowSize * 2)
+    final arrowLeftPadding = arrowPositionPx - arrowSize;
     
     Widget arrowWidget = _buildArrow(
       arrowColor, 
@@ -528,9 +552,11 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       case 'bottom': // Tooltip below target, arrow points UP at top
         return Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Align(
-              alignment: Alignment(alignmentValue, 0),
+            // FIX: Use Padding for pixel-based positioning instead of Align
+            Padding(
+              padding: EdgeInsets.only(left: arrowLeftPadding.clamp(0, effectiveWidth - arrowSize * 2)),
               child: arrowWidget,
             ),
             tooltipContainer,
@@ -539,32 +565,42 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       case 'top': // Tooltip above target, arrow points DOWN at bottom
         return Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             tooltipContainer,
-            Align(
-              alignment: Alignment(alignmentValue, 0),
+            // FIX: Use Padding for pixel-based positioning instead of Align
+            Padding(
+              padding: EdgeInsets.only(left: arrowLeftPadding.clamp(0, effectiveWidth - arrowSize * 2)),
               child: arrowWidget,
             ),
           ],
         );
       case 'right': // Tooltip right of target, arrow points LEFT on left side
+        // For vertical positioning, calculate top padding
+        final arrowTopPaddingRight = arrowPositionPx - arrowSize;
         return Row(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Align(
-              alignment: Alignment(0, alignmentValue),
+            // FIX: Use Padding for pixel-based positioning instead of Align
+            Padding(
+              padding: EdgeInsets.only(top: arrowTopPaddingRight.clamp(0, effectiveWidth - arrowSize * 2)),
               child: arrowWidget,
             ),
             tooltipContainer,
           ],
         );
       case 'left': // Tooltip left of target, arrow points RIGHT on right side
+        // For vertical positioning, calculate top padding
+        final arrowTopPaddingLeft = arrowPositionPx - arrowSize;
         return Row(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             tooltipContainer,
-            Align(
-              alignment: Alignment(0, alignmentValue),
+            // FIX: Use Padding for pixel-based positioning instead of Align
+            Padding(
+              padding: EdgeInsets.only(top: arrowTopPaddingLeft.clamp(0, effectiveWidth - arrowSize * 2)),
               child: arrowWidget,
             ),
           ],
@@ -651,16 +687,29 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final fontSize = rawFontSize * scaleRatio; // SCALE fontSize!
     final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.white;
     final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']);
+    // FIX: Add fontFamily support - was missing!
+    final fontFamily = content['fontFamily']?.toString();
+    // FIX: Read lineHeight from content instead of hardcoded 1.4
+    final lineHeight = (content['lineHeight'] as num?)?.toDouble() ?? 1.4;
+    // FIX: Read marginBottom from style instead of hardcoded 8
+    final rawMarginBottom = (style['marginBottom'] as num?)?.toDouble() ?? 0;
+    final marginBottom = rawMarginBottom * scaleRatio;
     
     return Padding(
-      padding: EdgeInsets.only(bottom: 8 * scaleRatio), // SCALE padding!
-      child: Text(
-        text,
-        style: TextStyle(
-          color: textColor,
-          fontSize: fontSize,
-          fontWeight: fontWeight,
-          height: 1.4,
+      padding: EdgeInsets.only(bottom: marginBottom),
+      // FIX: SizedBox with full width to ensure text wraps consistently like Dashboard
+      child: SizedBox(
+        width: double.infinity,
+        child: Text(
+          text,
+          softWrap: true, // FIX: Ensure text wraps like Dashboard
+          style: TextStyle(
+            color: textColor,
+            fontSize: fontSize,
+            fontWeight: fontWeight,
+            fontFamily: fontFamily, // Now uses custom font!
+            height: lineHeight, // FIX: Now configurable
+          ),
         ),
       ),
     );
@@ -673,28 +722,47 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final rawFontSize = (content['fontSize'] as num?)?.toDouble() ?? 14;
     final fontSize = rawFontSize * scaleRatio;
     final action = content['action'] as Map<String, dynamic>?;
+    // FIX: Add fontFamily support - check both content and style
+    final fontFamily = content['fontFamily']?.toString() ?? style['fontFamily']?.toString();
+    // FIX: Add fontWeight support
+    final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']) 
+                       ?? NinjaLayerUtils.parseFontWeight(style['fontWeight'])
+                       ?? FontWeight.w600;
+    // FIX: Read borderRadius from style (default 8)
+    final rawBorderRadius = (style['borderRadius'] as num?)?.toDouble() ?? 8;
+    final borderRadius = rawBorderRadius * scaleRatio;
+    // FIX: Read custom padding from style
+    final rawPaddingTop = (style['paddingTop'] as num?)?.toDouble() ?? 12;
+    final rawPaddingRight = (style['paddingRight'] as num?)?.toDouble() ?? 16;
+    final rawPaddingBottom = (style['paddingBottom'] as num?)?.toDouble() ?? 12;
+    final rawPaddingLeft = (style['paddingLeft'] as num?)?.toDouble() ?? 16;
     
-    return SizedBox(
-      width: double.infinity,
-      child: ElevatedButton(
-        onPressed: () {
-          if (action != null) {
-            final actionType = action['type']?.toString() ?? 'dismiss';
-            _handleAction(actionType, action);
-          } else {
-            _handleDismiss();
-          }
-        },
-        style: ElevatedButton.styleFrom(
-          backgroundColor: bgColor,
-          foregroundColor: textColor,
-          padding: EdgeInsets.symmetric(vertical: 12 * scaleRatio), // SCALED!
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8 * scaleRatio), // SCALED!
-          ),
+    return ElevatedButton(
+      onPressed: () {
+        if (action != null) {
+          final actionType = action['type']?.toString() ?? 'dismiss';
+          _handleAction(actionType, action);
+        } else {
+          _handleDismiss();
+        }
+      },
+      style: ElevatedButton.styleFrom(
+        backgroundColor: bgColor,
+        foregroundColor: textColor,
+        // FIX: Use custom padding from style
+        padding: EdgeInsets.only(
+          top: rawPaddingTop * scaleRatio,
+          right: rawPaddingRight * scaleRatio,
+          bottom: rawPaddingBottom * scaleRatio,
+          left: rawPaddingLeft * scaleRatio,
         ),
-        child: Text(label, style: TextStyle(fontSize: fontSize)), // SCALED!
+        shape: RoundedRectangleBorder(
+          // FIX: Use custom borderRadius from style
+          borderRadius: BorderRadius.circular(borderRadius),
+        ),
       ),
+      // FIX: Add fontFamily and fontWeight to TextStyle
+      child: Text(label, style: TextStyle(fontSize: fontSize, fontFamily: fontFamily, fontWeight: fontWeight)),
     );
   }
 
@@ -705,18 +773,26 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     // SCALE image dimensions!
     final width = rawWidth != null ? rawWidth * scaleRatio : null;
     final height = rawHeight != null ? rawHeight * scaleRatio : null;
+    // FIX: Read borderRadius from style instead of hardcoded 8
+    final rawBorderRadius = (style['borderRadius'] as num?)?.toDouble() ?? 0;
+    final borderRadius = rawBorderRadius * scaleRatio;
+    // FIX: Read objectFit from style (default 'contain' to match Dashboard)
+    final objectFitStr = style['objectFit']?.toString() ?? 'contain';
+    final objectFit = objectFitStr == 'cover' ? BoxFit.cover 
+                     : objectFitStr == 'fill' ? BoxFit.fill
+                     : BoxFit.contain;
     
     if (imageUrl == null || imageUrl.isEmpty) {
       return const SizedBox.shrink();
     }
     
     return ClipRRect(
-      borderRadius: BorderRadius.circular(8 * scaleRatio), // SCALED!
+      borderRadius: BorderRadius.circular(borderRadius),
       child: Image.network(
         imageUrl,
         width: width,
         height: height,
-        fit: BoxFit.cover,
+        fit: objectFit,
         errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white),
       ),
     );
@@ -729,23 +805,26 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     );
   }
 
-  double _calculateTooltipX(String position, Rect target, double tooltipWidth, double arrowSize, double offset) {
+  // FIX: Added scaled gap constant for pixel-perfect positioning
+  double _calculateTooltipX(String position, Rect target, double tooltipWidth, double arrowSize, double offset, double scaleRatio) {
+    final scaledGapConstant = 4 * scaleRatio; // Scale the constant gap
     switch (position) {
       case 'left':
-        return target.left - tooltipWidth - arrowSize - 4 + offset;
+        return target.left - tooltipWidth - arrowSize - scaledGapConstant + offset;
       case 'right':
-        return target.right + arrowSize + 4 + offset;
+        return target.right + arrowSize + scaledGapConstant + offset;
       default: // top, bottom
         return target.center.dx - tooltipWidth / 2 + offset;
     }
   }
 
-  double _calculateTooltipY(String position, Rect target, double arrowSize, double offset) {
+  double _calculateTooltipY(String position, Rect target, double arrowSize, double offset, double scaleRatio) {
+    final scaledGapConstant = 4 * scaleRatio; // Scale the constant gap
     switch (position) {
       case 'top':
-        return target.top - arrowSize - 4 + offset;
+        return target.top - arrowSize - scaledGapConstant + offset;
       case 'bottom':
-        return target.bottom + arrowSize + 4 + offset;
+        return target.bottom + arrowSize + scaledGapConstant + offset;
       default: // left, right
         return target.center.dy + offset;
     }
