@@ -194,11 +194,29 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     // FIX #4: Read layers from campaign.layers (correct source), fallback to config
     final rawLayers = widget.campaign.layers ?? config['layers'] as List<dynamic>? ?? [];
     
+    // 🔥 DEBUG: Print ALL raw layers before filtering
+    debugPrint('=== RAW LAYERS DEBUG ===');
+    debugPrint('Total raw layers: ${rawLayers.length}');
+    for (var i = 0; i < rawLayers.length; i++) {
+      final l = rawLayers[i] as Map<String, dynamic>?;
+      final type = l?['type']?.toString() ?? 'unknown';
+      final name = l?['name']?.toString() ?? 'unnamed';
+      final visible = l?['visible'];
+      final parent = l?['parent']?.toString();
+      debugPrint('  [$i] type: $type, name: "$name", visible: $visible, parent: $parent');
+    }
+    debugPrint('========================');
+    
     // Filter out container layers, get only renderable child layers
+    // Also filter out invisible layers
     final layers = rawLayers.where((l) {
-      final type = (l as Map<String, dynamic>?)?['type']?.toString() ?? '';
-      return type != 'container' && type != 'tooltip';
+      final layer = l as Map<String, dynamic>?;
+      final type = layer?['type']?.toString() ?? '';
+      final visible = layer?['visible'] != false; // Default true if not specified
+      return type != 'container' && type != 'tooltip' && visible;
     }).toList();
+    
+    debugPrint('📦 Filtered layers for rendering: ${layers.length}');
     
     // Device scaling
     final deviceWidth = MediaQuery.of(context).size.width;
@@ -255,6 +273,11 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final overlayEnabled = tooltipConfig['overlayEnabled'] != false;
     final overlayColor = NinjaLayerUtils.parseColor(tooltipConfig['overlayColor']) ?? Colors.black;
     final overlayOpacity = (tooltipConfig['overlayOpacity'] as num?)?.toDouble() ?? 0.5;
+    
+    // Behavior settings
+    final closeOnOutsideClick = tooltipConfig['closeOnOutsideClick'] != false; // Default true
+    final closeOnTargetClick = tooltipConfig['closeOnTargetClick'] == true; // Default false
+    final autoScrollToTarget = tooltipConfig['autoScrollToTarget'] == true; // Default false (requires Scrollable widget access)
 
     // 🔥 DEBUG: Print all parsed values
     debugPrint('=== TOOLTIP CONFIG DEBUG ===');
@@ -281,7 +304,8 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
           // Overlay with Spotlight (cutout for target)
           if (overlayEnabled)
             GestureDetector(
-              onTap: _handleDismiss,
+              // Only dismiss on outside click if setting is enabled
+              onTap: closeOnOutsideClick ? _handleDismiss : null,
               child: _targetRect != null
                   ? CustomPaint(
                       size: MediaQuery.of(context).size,
@@ -296,6 +320,19 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                   : Container(
                       color: overlayColor.withOpacity(overlayOpacity),
                     ),
+            ),
+          
+          // Clickable target area (for closeOnTargetClick)
+          if (_targetRect != null && closeOnTargetClick)
+            Positioned(
+              left: _targetRect!.left,
+              top: _targetRect!.top,
+              width: _targetRect!.width,
+              height: _targetRect!.height,
+              child: GestureDetector(
+                onTap: _handleDismiss,
+                child: const ColoredBox(color: Colors.transparent),
+              ),
             ),
 
           // Tooltip Positioned
@@ -327,11 +364,13 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                             padding,
                             arrowEnabled,
                             arrowSize,
+                            arrowRoundness,
+                            arrowPositionPercent, // Arrow position along edge
                             shadowEnabled,
                             shadowBlur,
                             shadowOpacity,
                             tooltipHeight,
-                            scaleRatio, // For scaling layer content
+                            scaleRatio,
                           ),
                         ),
                       ),
@@ -352,11 +391,13 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                           padding,
                           arrowEnabled,
                           arrowSize,
+                          arrowRoundness,
+                          arrowPositionPercent, // Arrow position along edge
                           shadowEnabled,
                           shadowBlur,
                           shadowOpacity,
                           tooltipHeight,
-                          scaleRatio, // For scaling layer content
+                          scaleRatio,
                         ),
                       ),
                     ),
@@ -378,11 +419,13 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                     padding,
                     arrowEnabled,
                     arrowSize,
+                    arrowRoundness,
+                    arrowPositionPercent, // Arrow position along edge
                     shadowEnabled,
                     shadowBlur,
                     shadowOpacity,
                     tooltipHeight,
-                    scaleRatio, // For scaling layer content
+                    scaleRatio,
                   ),
                 ),
               ),
@@ -402,63 +445,143 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     double padding,
     bool arrowEnabled,
     double arrowSize,
+    double arrowRoundness, // Arrow roundness percentage (0-100)
+    double arrowPositionPercent, // Arrow position along edge (0-100%)
     bool shadowEnabled,
     double shadowBlur,
     double shadowOpacityVal,
     double? height,
-    double scaleRatio, // NEW: For scaling layer content
+    double scaleRatio, // For scaling layer content
   ) {
     // Apply opacity to bgColor
     final effectiveBgColor = bgColor.withOpacity(backgroundOpacity);
     
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Arrow on top (when tooltip is below target)
-        if (arrowEnabled && position == 'bottom')
-          _buildArrow(effectiveBgColor, arrowSize, ArrowDirection.up),
-        
-        // Arrow on left (when tooltip is right of target)
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            if (arrowEnabled && position == 'right')
-              _buildArrow(effectiveBgColor, arrowSize, ArrowDirection.left),
-            
-            // Main body
-            Container(
-              width: width,
-              height: height,
-              padding: EdgeInsets.all(padding),
-              decoration: BoxDecoration(
-                color: effectiveBgColor,
-                borderRadius: BorderRadius.circular(borderRadius),
-                boxShadow: shadowEnabled ? [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(shadowOpacityVal),
-                    blurRadius: shadowBlur,
-                    offset: const Offset(0, 4),
-                  ),
-                ] : null,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: _buildLayers(layers, scaleRatio),
-              ),
+    // Build the main tooltip container with clipping to prevent overflow
+    final tooltipContainer = ClipRRect(
+      borderRadius: BorderRadius.circular(borderRadius),
+      clipBehavior: Clip.hardEdge, // Clip any overflowing content
+      child: Container(
+        width: width,
+        height: height,
+        padding: EdgeInsets.all(padding),
+        decoration: BoxDecoration(
+          color: effectiveBgColor,
+          borderRadius: BorderRadius.circular(borderRadius),
+          boxShadow: shadowEnabled ? [
+            BoxShadow(
+              color: Colors.black.withOpacity(shadowOpacityVal),
+              blurRadius: shadowBlur,
+              offset: const Offset(0, 4),
             ),
-            
-            if (arrowEnabled && position == 'left')
-              _buildArrow(effectiveBgColor, arrowSize, ArrowDirection.right),
-          ],
+          ] : null,
         ),
-        
-        // Arrow on bottom (when tooltip is above target)
-        if (arrowEnabled && position == 'top')
-          _buildArrow(effectiveBgColor, arrowSize, ArrowDirection.down),
-      ],
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: _buildLayers(layers, scaleRatio),
+        ),
+      ),
     );
+
+    // If no arrow, return just the container
+    if (!arrowEnabled) {
+      return tooltipContainer;
+    }
+
+    // Arrow positioning based on position and arrowPositionPercent
+    // positionPercent: 0 = start, 50 = center, 100 = end
+    return _buildTooltipWithArrow(
+      tooltipContainer, 
+      effectiveBgColor, 
+      position, 
+      arrowSize, 
+      arrowRoundness,
+      arrowPositionPercent,
+    );
+  }
+
+  // Build tooltip with positioned arrow using Stack
+  Widget _buildTooltipWithArrow(
+    Widget tooltipContainer,
+    Color arrowColor,
+    String position,
+    double arrowSize,
+    double arrowRoundness,
+    double arrowPositionPercent,
+  ) {
+    // For top/bottom: arrow is positioned horizontally
+    // For left/right: arrow is positioned vertically
+    final isVertical = position == 'top' || position == 'bottom';
+    
+    // Convert percent to alignment (-1 to 1 range)
+    // 0% = -1 (start), 50% = 0 (center), 100% = 1 (end)
+    final alignmentValue = (arrowPositionPercent / 50) - 1;
+    
+    Widget arrowWidget = _buildArrow(
+      arrowColor, 
+      arrowSize, 
+      _getArrowDirection(position),
+      roundness: arrowRoundness,
+    );
+
+    switch (position) {
+      case 'bottom': // Tooltip below target, arrow points UP at top
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Align(
+              alignment: Alignment(alignmentValue, 0),
+              child: arrowWidget,
+            ),
+            tooltipContainer,
+          ],
+        );
+      case 'top': // Tooltip above target, arrow points DOWN at bottom
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            tooltipContainer,
+            Align(
+              alignment: Alignment(alignmentValue, 0),
+              child: arrowWidget,
+            ),
+          ],
+        );
+      case 'right': // Tooltip right of target, arrow points LEFT on left side
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Align(
+              alignment: Alignment(0, alignmentValue),
+              child: arrowWidget,
+            ),
+            tooltipContainer,
+          ],
+        );
+      case 'left': // Tooltip left of target, arrow points RIGHT on right side
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            tooltipContainer,
+            Align(
+              alignment: Alignment(0, alignmentValue),
+              child: arrowWidget,
+            ),
+          ],
+        );
+      default:
+        return tooltipContainer;
+    }
+  }
+
+  ArrowDirection _getArrowDirection(String position) {
+    switch (position) {
+      case 'bottom': return ArrowDirection.up;
+      case 'top': return ArrowDirection.down;
+      case 'left': return ArrowDirection.right;
+      case 'right': return ArrowDirection.left;
+      default: return ArrowDirection.down;
+    }
   }
 
   List<Widget> _buildLayers(List<dynamic> layers, double scaleRatio) {
