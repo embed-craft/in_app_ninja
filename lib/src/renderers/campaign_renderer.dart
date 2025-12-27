@@ -46,13 +46,8 @@ class NinjaCampaignRenderer {
         );
 
       case 'bottomsheet':
-        // Use native rendering on mobile for perfect layout parity
-        if (Platform.isAndroid || Platform.isIOS) {
-          return NativeNudgeRenderer(
-            campaign: campaign,
-          );
-        }
-        // Fallback to Flutter widgets on other platforms
+        // PARITY FIX: Use Flutter renderer (like Modal) for consistent layer positioning
+        // Previously used NativeNudgeRenderer (WebView) which had different scaling logic
         return BottomSheetNudgeRenderer(
           campaign: campaign,
           onDismiss: onDismiss,
