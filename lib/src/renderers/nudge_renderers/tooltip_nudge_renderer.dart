@@ -751,35 +751,39 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       // Dimension calculation - try multiple sources
       // Style might store dimensions as numbers, strings, or in a 'size' sub-object
       final sizeObj = style['size'] as Map<String, dynamic>?;
-      final rawWidth = _parseDouble(style['width']) ?? _parseDouble(sizeObj?['width']);
-      final rawHeight = _parseDouble(style['height']) ?? _parseDouble(sizeObj?['height']);
-      final widthUnit = style['widthUnit']?.toString() ?? 'px';
-      final heightUnit = style['heightUnit']?.toString() ?? 'px';
+      final widthValue = style['width'] ?? sizeObj?['width'];
+      final heightValue = style['height'] ?? sizeObj?['height'];
+      
+      // FIX: Detect unit from value string itself (e.g., "60%" or "100px")
+      final widthIsPercent = widthValue?.toString().contains('%') ?? false;
+      final heightIsPercent = heightValue?.toString().contains('%') ?? false;
+      
+      final rawWidth = _parseDouble(widthValue);
+      final rawHeight = _parseDouble(heightValue);
       
       double? width;
-      if (rawWidth != null) {
-        width = widthUnit == '%' 
+      // FIX: Detect 'auto' string and treat as null (let child size itself)
+      final isAutoWidth = widthValue?.toString().toLowerCase() == 'auto';
+      if (!isAutoWidth && rawWidth != null) {
+        // Use detected unit from value, fallback to explicit widthUnit
+        final isPercent = widthIsPercent || (style['widthUnit']?.toString() == '%');
+        width = isPercent 
           ? (rawWidth / 100) * tooltipWidth 
           : rawWidth * scaleRatio;
-      } else {
-        // FIX: Default width for layers without explicit dimensions
-        // For images/media, use full container width; for text/button, let them auto-size
-        if (type == 'image' || type == 'media') {
-          width = tooltipWidth; // Default to container width
-        }
       }
+      // FIX: Removed default width for media - let it use intrinsic size like Dashboard
       
       double? height;
-      if (rawHeight != null) {
-        height = heightUnit == '%'
+      // FIX: Detect 'auto' string and treat as null (let child size itself)
+      final isAutoHeight = heightValue?.toString().toLowerCase() == 'auto';
+      if (!isAutoHeight && rawHeight != null) {
+        // Use detected unit from value, fallback to explicit heightUnit
+        final isPercent = heightIsPercent || (style['heightUnit']?.toString() == '%');
+        height = isPercent
           ? (rawHeight / 100) * tooltipHeight
           : rawHeight * scaleRatio;
-      } else {
-        // FIX: Default height for layers without explicit dimensions
-        if (type == 'image' || type == 'media') {
-          height = 100 * scaleRatio; // Default to 100px scaled
-        }
       }
+      // FIX: Removed default height for media - let it use intrinsic size like Dashboard
       
       debugPrint('    📍 Position: left=$left, top=$top, width=$width, height=$height');
       
@@ -808,16 +812,20 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
   
   Widget _buildTextLayerContent(Map<String, dynamic> content, Map<String, dynamic> style, double scaleRatio) {
     final text = content['text']?.toString() ?? '';
-    final fontSizeVal = content['fontSize'];
+    final fontSizeVal = content['fontSize'] ?? style['fontSize'];
     final rawFontSize = fontSizeVal is num ? fontSizeVal.toDouble() : (double.tryParse(fontSizeVal?.toString() ?? '') ?? 14);
     final fontSize = rawFontSize * scaleRatio;
-    final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? Colors.white;
-    final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']);
-    final fontFamily = content['fontFamily']?.toString();
-    final lineHeightVal = content['lineHeight'];
+    final textColor = NinjaLayerUtils.parseColor(content['textColor']) ?? NinjaLayerUtils.parseColor(style['color']) ?? Colors.white;
+    // FIX: Match Dashboard - content.fontWeight first, fallback to style
+    final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']) 
+                      ?? NinjaLayerUtils.parseFontWeight(style['fontWeight'])
+                      ?? FontWeight.w400;
+    // FIX: Match Dashboard - content.fontFamily first, fallback to style
+    final fontFamily = content['fontFamily']?.toString() ?? style['fontFamily']?.toString();
+    final lineHeightVal = content['lineHeight'] ?? style['lineHeight'];
     final lineHeight = lineHeightVal is num ? lineHeightVal.toDouble() : (double.tryParse(lineHeightVal?.toString() ?? '') ?? 1.4);
     // FIX: Add textAlign support to match Dashboard TextRenderer
-    final textAlignStr = content['textAlign']?.toString() ?? 'left';
+    final textAlignStr = content['textAlign']?.toString() ?? style['textAlign']?.toString() ?? 'left';
     final textAlign = textAlignStr == 'center' ? TextAlign.center
                     : textAlignStr == 'right' ? TextAlign.right
                     : textAlignStr == 'justify' ? TextAlign.justify
@@ -835,25 +843,37 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final shadowY = rawShadowY * scaleRatio;
     final shadowBlur = rawShadowBlur * scaleRatio;
     
+    // FIX: Use Google Fonts for proper font loading (same as button)
+    final baseTextStyle = TextStyle(
+      color: textColor,
+      fontSize: fontSize,
+      fontWeight: fontWeight,
+      height: lineHeight,
+      shadows: hasShadow ? [
+        Shadow(
+          offset: Offset(shadowX, shadowY),
+          blurRadius: shadowBlur,
+          color: shadowColor,
+        ),
+      ] : null,
+    );
+    
+    // Try to load the font via Google Fonts, fallback to base style
+    TextStyle textStyle;
+    if (fontFamily != null && fontFamily.isNotEmpty) {
+      final googleFont = NinjaLayerUtils.getGoogleFont(fontFamily, textStyle: baseTextStyle);
+      textStyle = googleFont ?? baseTextStyle;
+    } else {
+      textStyle = baseTextStyle;
+    }
+    
+    debugPrint('🔤 Text fontFamily: $fontFamily, fontWeight: $fontWeight, fontSize: $fontSize');
+    
     return Text(
       text,
       softWrap: true,
       textAlign: textAlign,
-      style: TextStyle(
-        color: textColor,
-        fontSize: fontSize,
-        fontWeight: fontWeight,
-        fontFamily: fontFamily,
-        height: lineHeight,
-        // FIX: Apply text shadow with scaling
-        shadows: hasShadow ? [
-          Shadow(
-            offset: Offset(shadowX, shadowY),
-            blurRadius: shadowBlur,
-            color: shadowColor,
-          ),
-        ] : null,
-      ),
+      style: textStyle,
     );
   }
 
@@ -868,10 +888,12 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final rawFontSize = fontSizeVal is num ? fontSizeVal.toDouble() : (double.tryParse(fontSizeVal?.toString() ?? '') ?? 14);
     final fontSize = rawFontSize * scaleRatio;
     final action = content['action'] as Map<String, dynamic>?;
+    // FIX: Match Dashboard - ButtonEditor saves to content.fontFamily, not style.fontFamily
     final fontFamily = content['fontFamily']?.toString() ?? style['fontFamily']?.toString();
+    // FIX: ButtonEditor saves fontWeight to content.fontWeight, not style
     final fontWeight = NinjaLayerUtils.parseFontWeight(content['fontWeight']) 
                        ?? NinjaLayerUtils.parseFontWeight(style['fontWeight'])
-                       ?? FontWeight.w600;
+                       ?? FontWeight.w500; // Match Dashboard default 'medium'
     final borderRadiusVal = style['borderRadius'];
     final rawBorderRadius = borderRadiusVal is num ? borderRadiusVal.toDouble() : (double.tryParse(borderRadiusVal?.toString() ?? '') ?? 8);
     final borderRadius = rawBorderRadius * scaleRatio;
@@ -883,6 +905,27 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     final rawPaddingRight = paddingRightVal is num ? paddingRightVal.toDouble() : (double.tryParse(paddingRightVal?.toString() ?? '') ?? 0);
     final rawPaddingBottom = paddingBottomVal is num ? paddingBottomVal.toDouble() : (double.tryParse(paddingBottomVal?.toString() ?? '') ?? 0);
     final rawPaddingLeft = paddingLeftVal is num ? paddingLeftVal.toDouble() : (double.tryParse(paddingLeftVal?.toString() ?? '') ?? 0);
+    
+    // FIX: Use Google Fonts for proper font loading
+    final baseTextStyle = TextStyle(
+      fontSize: fontSize, 
+      fontWeight: fontWeight,
+      color: textColor,
+    );
+    
+    debugPrint('🔤 Button fontFamily raw: style=${style['fontFamily']}, content=${content['fontFamily']}');
+    debugPrint('🔤 Button fontWeight raw: style=${style['fontWeight']}, content=${content['fontWeight']}');
+    debugPrint('🔤 Button resolved: fontFamily=$fontFamily, fontWeight=$fontWeight, fontSize=$fontSize');
+    
+    // Try to load the font via Google Fonts, fallback to base style
+    TextStyle textStyle;
+    if (fontFamily != null && fontFamily.isNotEmpty) {
+      final googleFont = NinjaLayerUtils.getGoogleFont(fontFamily, textStyle: baseTextStyle);
+      debugPrint('🔤 Google Font loaded: ${googleFont != null ? 'YES' : 'NO (fallback to default)'}');
+      textStyle = googleFont ?? baseTextStyle;
+    } else {
+      textStyle = baseTextStyle;
+    }
     
     return ElevatedButton(
       onPressed: () {
@@ -899,17 +942,22 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
         // FIX: Remove minimum size constraints to allow proper sizing
         minimumSize: Size.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        padding: EdgeInsets.only(
-          top: rawPaddingTop * scaleRatio,
-          right: rawPaddingRight * scaleRatio,
-          bottom: rawPaddingBottom * scaleRatio,
-          left: rawPaddingLeft * scaleRatio,
-        ),
+        // FIX: Zero padding by default to match Dashboard
+        padding: EdgeInsets.zero,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(borderRadius),
         ),
+        // FIX: Center text alignment
+        alignment: Alignment.center,
       ),
-      child: Text(label, style: TextStyle(fontSize: fontSize, fontFamily: fontFamily, fontWeight: fontWeight)),
+      // FIX: Center the text and apply Google Fonts style
+      child: Center(
+        child: Text(
+          label, 
+          textAlign: TextAlign.center,
+          style: textStyle,
+        ),
+      ),
     );
   }
 
@@ -931,8 +979,9 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       borderRadius: BorderRadius.circular(borderRadius),
       child: Image.network(
         imageUrl,
-        width: double.infinity,
-        height: double.infinity,
+        // FIX: Use null instead of infinity - Positioned constraints will handle sizing
+        // If Positioned has width/height, they'll constrain the image
+        // If not, image uses its intrinsic size
         fit: objectFit,
         errorBuilder: (_, __, ___) => const Icon(Icons.broken_image, color: Colors.white),
       ),
@@ -1101,18 +1150,30 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     // FIX: Handle both String and num types for width/height
     final rawWidthVal = style['width'];
     final rawHeightVal = style['height'];
-    final rawWidth = rawWidthVal is num ? rawWidthVal.toDouble() : double.tryParse(rawWidthVal?.toString() ?? '');
-    final rawHeight = rawHeightVal is num ? rawHeightVal.toDouble() : double.tryParse(rawHeightVal?.toString() ?? '');
     
-    // FIX: Check if width/height are percentages
-    final widthUnit = style['widthUnit']?.toString() ?? 'px';
-    final heightUnit = style['heightUnit']?.toString() ?? 'px';
+    // FIX: Detect percentage from value string itself (e.g., "60%")
+    final widthIsPercent = rawWidthVal?.toString().contains('%') ?? false;
+    final heightIsPercent = rawHeightVal?.toString().contains('%') ?? false;
+    
+    // Strip units for parsing (px, %, etc.)
+    double? parseValue(dynamic val) {
+      if (val == null) return null;
+      if (val is num) return val.toDouble();
+      String strVal = val.toString().trim().toLowerCase();
+      strVal = strVal.replaceAll('px', '').replaceAll('%', '').replaceAll('pt', '').replaceAll('em', '').replaceAll('rem', '').trim();
+      return double.tryParse(strVal);
+    }
+    
+    final rawWidth = parseValue(rawWidthVal);
+    final rawHeight = parseValue(rawHeightVal);
+    
+    // FIX: Check if width/height are percentages (from value OR explicit unit)
+    bool usePercentageWidth = widthIsPercent || (style['widthUnit']?.toString() == '%');
+    bool usePercentageHeight = heightIsPercent || (style['heightUnit']?.toString() == '%');
     
     // Calculate dimensions based on unit type
     double? width;
     double? height;
-    bool usePercentageWidth = widthUnit == '%';
-    bool usePercentageHeight = heightUnit == '%';
     
     if (!usePercentageWidth && rawWidth != null) {
       // Pixel-based: scale like other dimensions

@@ -2406,7 +2406,7 @@ class _ModalNudgeRendererState extends State<ModalNudgeRenderer> with SingleTick
   Color? _parseColor(dynamic value) => NinjaLayerUtils.parseColor(value);
   EdgeInsets? _parseEdgeInsets(dynamic value) => NinjaLayerUtils.parsePadding(value);
   BoxFit _parseBoxFit(dynamic value) => NinjaLayerUtils.parseBoxFit(value);
-  FontWeight _parseFontWeight(dynamic value) => NinjaLayerUtils.parseFontWeight(value);
+  FontWeight _parseFontWeight(dynamic value) => NinjaLayerUtils.parseFontWeight(value) ?? FontWeight.normal;
 }
 
 class _EntranceAnimator extends StatefulWidget {

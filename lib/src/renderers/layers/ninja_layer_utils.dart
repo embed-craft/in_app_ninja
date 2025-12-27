@@ -242,13 +242,60 @@ class NinjaLayerUtils {
     return null;
   }
 
-  static FontWeight parseFontWeight(dynamic value) {
-    switch (value?.toString()) {
-      case 'bold': return FontWeight.bold;
-      case 'semibold': return FontWeight.w600;
+  static FontWeight? parseFontWeight(dynamic value) {
+    if (value == null) return null;
+    
+    // Handle numeric weights (100-900)
+    if (value is num) {
+      final weight = value.toInt();
+      if (weight <= 100) return FontWeight.w100;
+      if (weight <= 200) return FontWeight.w200;
+      if (weight <= 300) return FontWeight.w300;
+      if (weight <= 400) return FontWeight.w400;
+      if (weight <= 500) return FontWeight.w500;
+      if (weight <= 600) return FontWeight.w600;
+      if (weight <= 700) return FontWeight.w700;
+      if (weight <= 800) return FontWeight.w800;
+      return FontWeight.w900;
+    }
+    
+    // Handle string values (case-insensitive)
+    final str = value.toString().toLowerCase().trim();
+    
+    // Try parsing as number first
+    final numWeight = int.tryParse(str);
+    if (numWeight != null) {
+      if (numWeight <= 100) return FontWeight.w100;
+      if (numWeight <= 200) return FontWeight.w200;
+      if (numWeight <= 300) return FontWeight.w300;
+      if (numWeight <= 400) return FontWeight.w400;
+      if (numWeight <= 500) return FontWeight.w500;
+      if (numWeight <= 600) return FontWeight.w600;
+      if (numWeight <= 700) return FontWeight.w700;
+      if (numWeight <= 800) return FontWeight.w800;
+      return FontWeight.w900;
+    }
+    
+    // Handle text names
+    switch (str) {
+      case 'thin': return FontWeight.w100;
+      case 'extralight':
+      case 'extra light':
+      case 'ultra light': return FontWeight.w200;
+      case 'light': return FontWeight.w300;
+      case 'regular':
+      case 'normal': return FontWeight.w400;
       case 'medium': return FontWeight.w500;
-      case 'normal': 
-      default: return FontWeight.normal;
+      case 'semibold':
+      case 'semi bold':
+      case 'demi bold': return FontWeight.w600;
+      case 'bold': return FontWeight.w700;
+      case 'extrabold':
+      case 'extra bold':
+      case 'ultra bold': return FontWeight.w800;
+      case 'black':
+      case 'heavy': return FontWeight.w900;
+      default: return null;
     }
   }
 
