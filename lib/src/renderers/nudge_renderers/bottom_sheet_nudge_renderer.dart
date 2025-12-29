@@ -732,11 +732,6 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       content['buttonFontWeight']
     ) ?? FontWeight.w600;
     
-    // DEBUG: Log button properties - check ALL locations
-    debugPrint('InAppNinja: 🔘 Button: text=$text, themeColor=$themeColor, fontSize=$fontSize, fontWeight=$fontWeight');
-    debugPrint('InAppNinja: 🔘 FULL CONTENT: $content');
-    debugPrint('InAppNinja: 🔘 Button style: backgroundColor=${style['backgroundColor']}, fontFamily=${style['fontFamily']}');
-    
     // Font family support - check style FIRST (where Dashboard stores actual values)
     String? fontFamily = (style['fontFamily'] as String?) ?? 
                          (content['fontFamily'] as String?) ??
@@ -787,16 +782,6 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
     final flexLayout = component['flexLayout'] as Map<String, dynamic>? ?? {};
     final componentSize = component['size'] as Map<String, dynamic>? ?? {};
     
-    // DEBUG: Log container children count and types
-    debugPrint('InAppNinja: 📦 Container has ${children.length} children');
-    for (int i = 0; i < children.length; i++) {
-      final child = children[i];
-      if (child is Map<String, dynamic>) {
-        final childStyle = child['style'] as Map<String, dynamic>? ?? {};
-        debugPrint('InAppNinja:   → Child[$i]: type=${child['type']}, position=${childStyle['position']}, top=${childStyle['top']}, left=${childStyle['left']}');
-      }
-    }
-    
     final cWidth = NinjaLayerUtils.parseResponsiveSize(style['width'] ?? componentSize['width'], context, isVertical: false, parentSize: parentSize) ?? parentSize.width;
     final cHeight = NinjaLayerUtils.parseResponsiveSize(style['height'] ?? componentSize['height'], context, isVertical: true, parentSize: parentSize) ?? parentSize.height;
     final containerSize = Size(cWidth, cHeight);
@@ -845,7 +830,6 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       
       // Wrap with Stack if there are absolute children
       if (absoluteEntries.isNotEmpty) {
-        debugPrint('InAppNinja: 📍 Container rendering ${absoluteEntries.length} absolute children');
         content = SizedBox(
           width: containerSize.width,
           height: containerSize.height,
@@ -885,9 +869,13 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
     final containerPadding = hasAbsoluteChildren 
         ? EdgeInsets.zero
         : NinjaLayerUtils.parsePadding(style['padding'], context);
+        
+    // PARITY FIX: Handle overflow: hidden
+    final overflow = style['overflow'] as String? ?? 'visible';
 
     return Container(
       padding: containerPadding,
+      clipBehavior: overflow == 'hidden' ? Clip.hardEdge : Clip.none,
       child: content,
     );
   }

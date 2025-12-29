@@ -3,6 +3,7 @@ import 'dart:io';
 import '../models/campaign.dart';
 import 'nudge_renderers/modal_nudge_renderer.dart';
 import 'nudge_renderers/banner_nudge_renderer.dart';
+
 import 'nudge_renderers/tooltip_nudge_renderer.dart';
 import 'nudge_renderers/bottom_sheet_nudge_renderer.dart';
 import 'native_nudge_renderer.dart';
@@ -53,6 +54,8 @@ class NinjaCampaignRenderer {
           onDismiss: onDismiss,
           onCTAClick: onCTAClick,
         );
+
+
 
       case 'banner':
       case 'top_banner':
