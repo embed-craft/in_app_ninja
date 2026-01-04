@@ -4,6 +4,8 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import '../../models/campaign.dart';
+import '../campaign_renderer.dart';
+import '../../utils/interface_handler.dart';
 
 class PIPNudgeRendererV2 extends StatefulWidget {
   final Campaign campaign;
@@ -186,7 +188,35 @@ class _PIPNudgeRendererV2State extends State<PIPNudgeRendererV2> with SingleTick
             color: Colors.transparent,
             elevation: _isMaximized ? 0 : 8,
             child: GestureDetector(
-              onTap: _isMaximized ? null : _toggleMaximize, // Tap to maximize if minimized
+              behavior: HitTestBehavior.opaque, // ✅ Ensure taps are caught even if transparent
+              onTap: () {
+                // ✅ FEATURE: Support Container Actions (Prioritize over maximize)
+                final actionConfig = config['action'];
+                if (actionConfig != null) {
+                   String actionType = 'default';
+                   Map<String, dynamic> actionData = {};
+
+                   if (actionConfig is String) {
+                     actionType = actionConfig;
+                   } else if (actionConfig is Map) {
+                     actionType = (actionConfig['type'] as String?) ?? 'default';
+                     actionData = Map<String, dynamic>.from(actionConfig as Map);
+                   }
+                   
+                   // Handle interface manually or pass to callback
+                   if (actionType == 'interface' && actionData['interfaceId'] != null) {
+                      _showInterface(actionData['interfaceId']);
+                   } else {
+                      widget.onCTAClick?.call(actionType, actionData);
+                   }
+                   return; 
+                }
+
+                // Default PIP Behavior
+                if (!_isMaximized) {
+                  _toggleMaximize();
+                }
+              },
               child: Container(
                 decoration: BoxDecoration(
                   color: backgroundColor,
@@ -801,9 +831,29 @@ class _PIPNudgeRendererV2State extends State<PIPNudgeRendererV2> with SingleTick
         debugPrint('Action Triggered: $action');
         final payload = Map<String, dynamic>.from(component);
         payload['formData'] = _formData;
+        
+        // Handle interface action internally
+        if (action == 'interface') {
+          final interfaceId = component['content']?['interfaceId'] as String?;
+          if (interfaceId != null) {
+            _showInterface(interfaceId);
+            return;
+          }
+        }
+        
         widget.onCTAClick?.call(action, payload);
       },
       child: child,
+    );
+  }
+
+  void _showInterface(String interfaceId) {
+    InterfaceHandler.show(
+      interfaceId: interfaceId,
+      parentCampaign: widget.campaign,
+      context: context,
+      onDismiss: widget.onDismiss,
+      onCTAClick: widget.onCTAClick,
     );
   }
 

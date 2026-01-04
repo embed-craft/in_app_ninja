@@ -3,6 +3,8 @@ import 'dart:ui' as ui;
 import 'dart:math' as math;
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/campaign.dart';
+import '../campaign_renderer.dart';
+import '../../utils/interface_handler.dart';
 
 class FloaterNudgeRenderer extends StatefulWidget {
   final Campaign campaign;
@@ -166,6 +168,16 @@ class _FloaterNudgeRendererState extends State<FloaterNudgeRenderer> with Single
     // Apply Opacity
     if (opacity < 1.0) {
       content = Opacity(opacity: opacity, child: content);
+    }
+
+    // ✅ FEATURE: Support Container Actions
+    if (config['action'] != null) {
+      content = _buildInteraction(content, {
+        'type': 'container',
+        'content': {
+          'action': config['action'],
+        }
+      });
     }
 
     // Center Vertical Logic
@@ -1194,9 +1206,25 @@ class _FloaterNudgeRendererState extends State<FloaterNudgeRenderer> with Single
           widget.onCTAClick?.call(action, {'url': url, ...?data});
         }
         break;
+      case 'interface':
+        final interfaceId = data?['interfaceId'] as String?;
+        if (interfaceId != null && interfaceId.isNotEmpty) {
+          _showInterface(interfaceId);
+        }
+        break;
       default:
         widget.onCTAClick?.call(action, data);
     }
+  }
+
+  void _showInterface(String interfaceId) {
+    InterfaceHandler.show(
+      interfaceId: interfaceId,
+      parentCampaign: widget.campaign,
+      context: context,
+      onDismiss: widget.onDismiss,
+      onCTAClick: widget.onCTAClick,
+    );
   }
 
   EdgeInsets? _parseEdgeInsets(dynamic padding) {
@@ -1444,8 +1472,10 @@ class _FloaterNudgeRendererState extends State<FloaterNudgeRenderer> with Single
     }
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque, // ✅ Ensure taps are caught even if transparent
       onTap: () {
-        debugPrint('Action Triggered: $action');
+        final type = action['type'] as String? ?? 'none';
+        _handleAction(type, action);
       },
       child: child,
     );

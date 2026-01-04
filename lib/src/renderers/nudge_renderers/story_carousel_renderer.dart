@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import '../../models/campaign.dart';
+import '../campaign_renderer.dart';
+import '../../utils/interface_handler.dart';
 
 /// StoryCarousel Nudge Renderer
 ///
@@ -119,11 +121,33 @@ class _StoryCarouselNudgeRendererState extends State<StoryCarouselNudgeRenderer>
     widget.onDismiss?.call();
   }
 
-  void _handleCTA(String action) {
+  void _handleCTA(String action, [Map<String, dynamic>? data]) {
     final config = widget.campaign.config;
-    widget.onCTAClick?.call(action, config);
+    
+    switch (action) {
+      case 'interface':
+        final interfaceId = data?['interfaceId'] as String?;
+        if (interfaceId != null && interfaceId.isNotEmpty) {
+          _showInterface(interfaceId);
+          return; // Don't dismiss for interface action
+        }
+        break;
+      default:
+        widget.onCTAClick?.call(action, data ?? config);
+    }
     _handleDismiss();
   }
+
+  void _showInterface(String interfaceId) {
+    InterfaceHandler.show(
+      interfaceId: interfaceId,
+      parentCampaign: widget.campaign,
+      context: context,
+      onDismiss: widget.onDismiss,
+      onCTAClick: widget.onCTAClick,
+    );
+  }
+
 
   @override
   Widget build(BuildContext context) {

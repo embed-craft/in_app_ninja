@@ -22,18 +22,31 @@ class NinjaDatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2, // Bump version for migration
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
     );
   }
 
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Add new columns for interfaces support
+      await db.execute('ALTER TABLE campaigns ADD COLUMN interfaces TEXT');
+      await db.execute('ALTER TABLE campaigns ADD COLUMN layers TEXT');
+      await db.execute('ALTER TABLE campaigns ADD COLUMN title TEXT');
+    }
+  }
+
   Future<void> _onCreate(Database db, int version) async {
-    // 1. Campaigns Table (Cache)
+    // 1. Campaigns Table (Cache) - Updated schema
     await db.execute('''
       CREATE TABLE campaigns (
         id TEXT PRIMARY KEY,
+        title TEXT,
         config TEXT,
         triggers TEXT,
+        layers TEXT,
+        interfaces TEXT,
         priority INTEGER DEFAULT 0,
         start_date TEXT,
         end_date TEXT,

@@ -5,6 +5,8 @@ import 'dart:ui' as ui;
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/campaign.dart';
 import '../layers/ninja_layer_utils.dart';
+import '../campaign_renderer.dart';
+import '../../utils/interface_handler.dart';
 
 class BannerNudgeRenderer extends StatefulWidget {
   final Campaign campaign;
@@ -174,10 +176,26 @@ class _BannerNudgeRendererState extends State<BannerNudgeRenderer> with SingleTi
       case 'no_action':
         // No action - do nothing
         break;
+      case 'interface':
+        final interfaceId = data?['interfaceId'] as String?;
+        if (interfaceId != null && interfaceId.isNotEmpty) {
+          _showInterface(interfaceId);
+        }
+        break;
       default:
         // Pass through any other action
         widget.onCTAClick?.call(action, data);
     }
+  }
+
+  void _showInterface(String interfaceId) {
+    InterfaceHandler.show(
+      interfaceId: interfaceId,
+      parentCampaign: widget.campaign,
+      context: context,
+      onDismiss: widget.onDismiss,
+      onCTAClick: widget.onCTAClick,
+    );
   }
 
   @override
@@ -372,6 +390,16 @@ class _BannerNudgeRendererState extends State<BannerNudgeRenderer> with SingleTi
   );
 
     BannerContent = _applyFilters(BannerContent, responsiveConfig);
+
+    // ✅ FEATURE: Support Container Actions
+    if (responsiveConfig['action'] != null) {
+      BannerContent = _buildInteraction(BannerContent, {
+        'type': 'container',
+        'content': {
+          'action': responsiveConfig['action'],
+        }
+      });
+    }
 
     if (borderStyle != 'solid' && borderWidth > 0) {
       BannerContent = CustomPaint(
@@ -1570,6 +1598,7 @@ class _BannerNudgeRendererState extends State<BannerNudgeRenderer> with SingleTi
     }
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque, // ✅ Ensure taps are caught even if transparent
       onTap: () => _handleAction(actionType, actionData),
       child: child,
     );

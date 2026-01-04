@@ -8,6 +8,7 @@ class Campaign {
   final List<dynamic>? targeting; // Changed from Map to List
   final List<dynamic>? triggers; // Added
   final List<dynamic>? layers;
+  final List<Map<String, dynamic>>? interfaces; // NEW: Sub-interfaces for linked UI flows
   final String? variant;
   final DateTime? startDate;
   final DateTime? endDate;
@@ -25,6 +26,7 @@ class Campaign {
     this.targeting,
     this.triggers,
     this.layers,
+    this.interfaces,
     this.variant,
     this.startDate,
     this.endDate,
@@ -50,6 +52,11 @@ class Campaign {
       layers: json['layers'] != null && json['layers'] is List
           ? List<dynamic>.from(json['layers'])
           : null,
+      interfaces: json['interfaces'] != null && json['interfaces'] is List
+          ? List<Map<String, dynamic>>.from(
+              (json['interfaces'] as List).map((e) => Map<String, dynamic>.from(e))
+            )
+          : null,
       variant: json['variant']?.toString(),
       startDate: json['start_date'] != null ? DateTime.tryParse(json['start_date'].toString()) : null,
       endDate: json['end_date'] != null ? DateTime.tryParse(json['end_date'].toString()) : null,
@@ -70,6 +77,7 @@ class Campaign {
       'targeting': targeting,
       'triggers': triggers,
       'layers': layers,
+      'interfaces': interfaces,
       'variant': variant,
       'start_date': startDate?.toIso8601String(),
       'end_date': endDate?.toIso8601String(),

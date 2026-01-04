@@ -5,6 +5,8 @@ import 'dart:ui' as ui;
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/campaign.dart';
 import '../layers/ninja_layer_utils.dart';
+import '../campaign_renderer.dart';
+import '../../utils/interface_handler.dart'; // FIX: Add missing import
 
 /// BottomSheet Nudge Renderer - Uses EXACT Modal Engine for parity
 /// 
@@ -115,9 +117,28 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       case 'none':
       case 'no_action':
         break;
+      case 'interface':
+        final interfaceId = data?['interfaceId'] as String?;
+        if (interfaceId != null && interfaceId.isNotEmpty) {
+          // Import at top: import '../../utils/interface_handler.dart';
+          _showInterface(interfaceId);
+        }
+        break;
       default:
         widget.onCTAClick?.call(action, data);
     }
+  }
+
+
+  void _showInterface(String interfaceId) {
+    // FIX: Use centralized InterfaceHandler instead of duplicate code
+    InterfaceHandler.show(
+      interfaceId: interfaceId,
+      parentCampaign: widget.campaign,
+      context: context,
+      onDismiss: widget.onDismiss,
+      onCTAClick: widget.onCTAClick,
+    );
   }
 
   @override
@@ -236,13 +257,14 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
         ),
         boxShadow: shadows,
         // MODAL PARITY: BoxFit.fill + topLeft for layer alignment
-        image: backgroundImageUrl != null && backgroundImageUrl.isNotEmpty
-            ? DecorationImage(
-                image: NetworkImage(backgroundImageUrl),
-                fit: BoxFit.fill,
-                alignment: Alignment.topLeft,
-              )
-            : null,
+        // FIX: Moved background image to Stack to handle 404 errors gracefully
+        // image: backgroundImageUrl != null && backgroundImageUrl.isNotEmpty
+        //     ? DecorationImage(
+        //         image: NetworkImage(backgroundImageUrl),
+        //         fit: BoxFit.fill,
+        //         alignment: Alignment.topLeft,
+        //       )
+        //     : null,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.only(
@@ -251,6 +273,19 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
         ),
         child: Stack(
           children: [
+            // FIX: Background Image in Stack layer to handle 404s
+             if (backgroundImageUrl != null && backgroundImageUrl.isNotEmpty)
+               Positioned.fill(
+                 child: Image.network(
+                   backgroundImageUrl,
+                   fit: BoxFit.fill,
+                   alignment: Alignment.topLeft,
+                   errorBuilder: (context, error, stackTrace) {
+                     debugPrint('InAppNinja: ❌ Failed to load background image: $backgroundImageUrl');
+                     return const SizedBox.shrink(); // Fail silently
+                   },
+                 ),
+               ),
             SingleChildScrollView(
               physics: responsiveConfig['scrollable'] == true ? null : const NeverScrollableScrollPhysics(),
               child: Padding(
@@ -293,10 +328,21 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
                   ),
                 ),
               ),
+
           ],
         ),
       ),
     );
+
+    // ✅ FEATURE: Support Container Actions
+    if (responsiveConfig['action'] != null) {
+      sheetContent = _buildInteraction(sheetContent, {
+        'type': 'container',
+        'content': {
+          'action': responsiveConfig['action'],
+        }
+      });
+    }
 
     return Stack(
       children: [
@@ -548,7 +594,13 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            flowWidget,
+            SingleChildScrollView(
+              scrollDirection: direction,
+              // FIX: Use NeverScrollableScrollPhysics to HIDE overflow (clip it) without allowing user to scroll
+              // This satisfies "overflow: hidden" behavior while preventing RenderFlex errors
+              physics: const NeverScrollableScrollPhysics(),
+              child: flowWidget,
+            ),
              ...absoluteEntries.map((e) {
                final style = e['style'] as Map<String, dynamic>;
                final child = e['child'] as Widget;
@@ -930,6 +982,7 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
     if (action == null) return child;
     
     return GestureDetector(
+      behavior: HitTestBehavior.opaque, // ✅ Ensure taps are caught even if transparent
       onTap: () {
         if (action is String) {
           _handleAction(action);

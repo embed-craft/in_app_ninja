@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/campaign.dart';
 import '../layers/ninja_layer_utils.dart';
+import '../campaign_renderer.dart';
 import '../../app_ninja.dart';
+import '../../utils/interface_handler.dart';
 
 /// Tooltip Nudge Renderer - New Architecture
 /// 
@@ -177,10 +179,27 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
         final route = data?['route'] as String? ?? data?['screen'] as String?;
         widget.onCTAClick?.call(action, {'route': route, ...?data});
         break;
+      case 'interface':
+        final interfaceId = data?['interfaceId'] as String?;
+        if (interfaceId != null && interfaceId.isNotEmpty) {
+          _showInterface(interfaceId);
+        }
+        break;
       default:
         widget.onCTAClick?.call(action, data);
     }
   }
+
+  void _showInterface(String interfaceId) {
+    InterfaceHandler.show(
+      interfaceId: interfaceId,
+      parentCampaign: widget.campaign,
+      context: context,
+      onDismiss: widget.onDismiss,
+      onCTAClick: widget.onCTAClick,
+    );
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -536,21 +555,47 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     );
 
     // If no arrow, return just the container
+    Widget result;
     if (!arrowEnabled) {
-      return tooltipContainer;
+      result = tooltipContainer;
+    } else {
+      // Arrow positioning based on position and arrowPositionPercent
+      // positionPercent: 0 = start, 50 = center, 100 = end
+      result = _buildTooltipWithArrow(
+        tooltipContainer,
+        effectiveBgColor,
+        position,
+        arrowSize,
+        arrowRoundness,
+        arrowPositionPercent,
+        width, // FIX: Pass width for pixel-based arrow positioning
+      );
     }
 
-    // Arrow positioning based on position and arrowPositionPercent
-    // positionPercent: 0 = start, 50 = center, 100 = end
-    return _buildTooltipWithArrow(
-      tooltipContainer, 
-      effectiveBgColor, 
-      position, 
-      arrowSize, 
-      arrowRoundness,
-      arrowPositionPercent,
-      width, // FIX: Pass width for pixel-based arrow positioning
-    );
+    // ✅ FEATURE: Support Container Actions
+    final config = widget.campaign.config;
+    final tooltipActionConfig = (config['tooltipConfig'] as Map<String, dynamic>?)?['action'] 
+         ?? (config['tooltip_config'] as Map<String, dynamic>?)?['action']
+         ?? config['action'];
+
+    if (tooltipActionConfig != null) {
+       dynamic actionType = 'default';
+       Map<String, dynamic> actionData = {};
+
+       if (tooltipActionConfig is String) {
+         actionType = tooltipActionConfig;
+       } else if (tooltipActionConfig is Map) {
+         actionType = tooltipActionConfig['type'] ?? 'default';
+         actionData = Map<String, dynamic>.from(tooltipActionConfig);
+       }
+
+       return GestureDetector(
+          onTap: () => _handleAction(actionType.toString(), actionData),
+          child: result,
+       );
+    }
+
+    return result;
   }
 
   // Build tooltip with positioned arrow using Stack
@@ -738,6 +783,9 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       }
       
       if (child == null) continue;
+
+      // ✅ PARITY FIX: Wrap ALL layers in interaction builder
+      child = _buildInteraction(child, layer);
       
       // Position calculation - match Dashboard's toPercentX/Y approach
       // Dashboard: left = (rawLeft / 393) * 100% → CSS applies percentage to container
@@ -1279,6 +1327,34 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       default:
         return Alignment.center;
     }
+  }
+
+  // ✅ FEATURE: Support Layer Actions
+  Widget _buildInteraction(Widget child, Map<String, dynamic> component) {
+    // Check both 'action' (root) and 'content.action'
+    final actionConfig = component['action'] ?? component['content']?['action'];
+
+    // No action configured
+    if (actionConfig == null) {
+      return child;
+    }
+
+    // Action can be a String or Map
+    String actionType = 'default';
+    Map<String, dynamic> actionData = {};
+
+    if (actionConfig is String) {
+      actionType = actionConfig;
+    } else if (actionConfig is Map) {
+      actionType = (actionConfig['type'] as String?) ?? 'default';
+      actionData = Map<String, dynamic>.from(actionConfig);
+    }
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque, // ✅ Ensure taps are caught even if transparent
+      onTap: () => _handleAction(actionType, actionData),
+      child: child,
+    );
   }
 }
 

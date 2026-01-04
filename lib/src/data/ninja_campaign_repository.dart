@@ -34,6 +34,12 @@ class NinjaCampaignRepository {
         if (campaignMap['triggers'] is String) {
           campaignMap['triggers'] = jsonDecode(campaignMap['triggers']);
         }
+        if (campaignMap['layers'] is String && campaignMap['layers'] != null) {
+          campaignMap['layers'] = jsonDecode(campaignMap['layers']);
+        }
+        if (campaignMap['interfaces'] is String && campaignMap['interfaces'] != null) {
+          campaignMap['interfaces'] = jsonDecode(campaignMap['interfaces']);
+        }
         return Campaign.fromJson(campaignMap);
       }).toList();
 
@@ -56,7 +62,7 @@ class NinjaCampaignRepository {
 
     try {
       debugPrint('🔄 [NinjaRepo] Fetching from $url');
-      final response = await http.get(Uri.parse(url), headers: headers).timeout(const Duration(seconds: 15));
+      final response = await http.get(Uri.parse(url), headers: headers).timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
@@ -97,8 +103,11 @@ class NinjaCampaignRepository {
       for (final c in campaigns) {
         await txn.insert('campaigns', {
           'id': c.id,
+          'title': c.title,
           'config': jsonEncode(c.config),
           'triggers': jsonEncode(c.triggers),
+          'layers': c.layers != null ? jsonEncode(c.layers) : null,
+          'interfaces': c.interfaces != null ? jsonEncode(c.interfaces) : null,
           'start_date': c.startDate?.toIso8601String(),
           'end_date': c.endDate?.toIso8601String(),
           'created_at': c.createdAt?.toIso8601String(),

@@ -5,6 +5,8 @@ import 'dart:ui' as ui;
 import 'package:url_launcher/url_launcher.dart';
 import '../../models/campaign.dart';
 import '../layers/ninja_layer_utils.dart';
+import '../campaign_renderer.dart';
+import '../../utils/interface_handler.dart';
 
 class ModalNudgeRenderer extends StatefulWidget {
   final Campaign campaign;
@@ -135,10 +137,26 @@ class _ModalNudgeRendererState extends State<ModalNudgeRenderer> with SingleTick
       case 'no_action':
         // No action - do nothing
         break;
+      case 'interface':
+        final interfaceId = data?['interfaceId'] as String?;
+        if (interfaceId != null && interfaceId.isNotEmpty) {
+          _showInterface(interfaceId);
+        }
+        break;
       default:
         // Pass through any other action
         widget.onCTAClick?.call(action, data);
     }
+  }
+
+  void _showInterface(String interfaceId) {
+    InterfaceHandler.show(
+      interfaceId: interfaceId,
+      parentCampaign: widget.campaign,
+      context: context,
+      onDismiss: widget.onDismiss,
+      onCTAClick: widget.onCTAClick,
+    );
   }
 
   @override
@@ -289,6 +307,16 @@ class _ModalNudgeRendererState extends State<ModalNudgeRenderer> with SingleTick
     );
 
     modalContent = _applyFilters(modalContent, responsiveConfig);
+    
+    // ✅ FEATURE: Support Container Actions (e.g. click whole modal)
+    if (responsiveConfig['action'] != null) {
+      modalContent = _buildInteraction(modalContent, {
+        'type': 'container',
+        'content': {
+          'action': responsiveConfig['action'],
+        }
+      });
+    }
 
     if (borderStyle != 'solid' && borderWidth > 0) {
       modalContent = CustomPaint(
@@ -1371,6 +1399,7 @@ class _ModalNudgeRendererState extends State<ModalNudgeRenderer> with SingleTick
     }
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque, // ✅ Ensure taps are caught even if transparent
       onTap: () => _handleAction(actionType, actionData),
       child: child,
     );

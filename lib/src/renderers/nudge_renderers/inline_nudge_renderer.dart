@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/campaign.dart';
+import '../campaign_renderer.dart';
+import '../../utils/interface_handler.dart';
 
 /// Inline Nudge Renderer
 /// 
@@ -64,8 +66,27 @@ class _InlineNudgeRendererState extends State<InlineNudgeRenderer>
   }
 
   void _handleCTA(String action) {
+    // Handle interface action internally
+    if (action == 'interface') {
+      final interfaceId = widget.campaign.config['interfaceId'] as String?;
+      if (interfaceId != null) {
+        _showInterface(interfaceId);
+        return;
+      }
+    }
+
     final config = widget.campaign.config;
     widget.onCTAClick?.call(action, config);
+  }
+
+  void _showInterface(String interfaceId) {
+    InterfaceHandler.show(
+      interfaceId: interfaceId,
+      parentCampaign: widget.campaign,
+      context: context,
+      onDismiss: widget.onDismiss,
+      onCTAClick: widget.onCTAClick,
+    );
   }
 
   void _toggleExpand() {

@@ -92,6 +92,8 @@ class NinjaCampaignRenderer {
 
       case 'scratch':
       case 'scratch_card':
+      case 'scratchcard':
+      case 'scratch-card':
         return ScratchCardNudgeRenderer(
           campaign: campaign,
           onDismiss: onDismiss,
@@ -100,7 +102,9 @@ class NinjaCampaignRenderer {
 
       case 'story':
       case 'story_carousel':
+      case 'storycarousel':
       case 'stories':
+      case 'story-carousel':
         return StoryCarouselNudgeRenderer(
           campaign: campaign,
           onDismiss: onDismiss,
@@ -137,9 +141,10 @@ class NinjaCampaignRenderer {
     Function(String action, Map<String, dynamic>? data)? onCTAClick,
   }) {
     final type = campaign.config['type']?.toString().toLowerCase() ?? 'modal';
+    debugPrint('NinjaCampaignRenderer: 🎯 Resolving presentation for type: "$type"');
 
     // For modal/dialog/bottomsheet types
-    if (['modal', 'dialog', 'bottomsheet'].contains(type)) {
+    if (['modal', 'dialog', 'bottomsheet', 'scratch', 'scratch_card', 'scratchcard', 'scratch-card', 'story', 'story_carousel', 'storycarousel', 'stories', 'story-carousel'].contains(type)) {
       final overlayColor = _parseColor(campaign.config['overlay']?['color']);
       final overlayOpacity = (campaign.config['overlay']?['opacity'] as num?)?.toDouble() ?? 0.5;
       final barrierColor = overlayColor?.withOpacity(overlayOpacity) ?? Colors.black54;

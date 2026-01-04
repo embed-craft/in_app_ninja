@@ -1002,13 +1002,14 @@ class AppNinja {
   static Future<http.Response> _post(
       String path, Map<String, dynamic> body) async {
     final url = '$_baseUrl$path';
+    debugLog('🌐 POST Request to: $url (Timeout: 60s)');
     final response = await http
         .post(
           Uri.parse(url),
           headers: await _getHeaders(),
           body: jsonEncode(body),
         )
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 60));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('POST $path failed with status ${response.statusCode}');
