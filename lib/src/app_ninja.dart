@@ -9,6 +9,7 @@ import 'models/ninja_user.dart';
 import 'renderers/campaign_renderer.dart';
 import 'widgets/embed_widget_wrapper.dart'; // Import for type checking
 import 'data/ninja_campaign_repository.dart';
+import 'callbacks/ninja_callback_manager.dart';
 
 /// AppNinja - Main SDK class for InAppNinja
 ///
@@ -156,6 +157,8 @@ class AppNinja {
       // We can defer this until we have context via setContext or NinjaApp.
       
       _initSuccessCallback?.call();
+      NinjaCallbackManager.dispatchInitialised(
+          sdkVersion: 'in_app_ninja_flutter_1.0.0');
     } catch (e) {
       debugPrint('Error in AppNinja.init: $e');
       _initFailureCallback?.call(e.toString());
@@ -241,6 +244,7 @@ class AppNinja {
       }
 
       _eventListener?.call(eventName, properties);
+      NinjaCallbackManager.dispatchTrackEvent(eventName, properties);
     } catch (e) {
       debugLog('❌ Track failed, queuing: $e');
       await _queueEvent({'type': 'track', 'payload': event});
@@ -269,9 +273,11 @@ class AppNinja {
 
     try {
       await _post('/api/v1/nudge/identify', payload); // Updated Endpoint
+      NinjaCallbackManager.dispatchUserIdentifierSuccess(payload);
     } catch (e) {
       debugLog('Identify failed, queuing: $e');
       await _queueEvent({'type': 'identify', 'payload': payload});
+      NinjaCallbackManager.dispatchUserIdentifierFailure(e.toString());
     }
   }
 
@@ -507,9 +513,11 @@ class AppNinja {
 
     try {
       await _post('/v1/identify', payload);
+      NinjaCallbackManager.dispatchUserIdentifierSuccess(payload);
     } catch (e) {
       debugLog('userIdentifier failed, queuing: $e');
       await _queueEvent({'type': 'identify', 'payload': payload});
+      NinjaCallbackManager.dispatchUserIdentifierFailure(e.toString());
     }
   }
 

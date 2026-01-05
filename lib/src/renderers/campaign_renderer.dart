@@ -3,6 +3,7 @@ import 'dart:io';
 import '../models/campaign.dart';
 import 'nudge_renderers/modal_nudge_renderer.dart';
 import 'nudge_renderers/banner_nudge_renderer.dart';
+import '../callbacks/ninja_callback_manager.dart';
 
 import 'nudge_renderers/tooltip_nudge_renderer.dart';
 import 'nudge_renderers/bottom_sheet_nudge_renderer.dart';
@@ -31,9 +32,36 @@ class NinjaCampaignRenderer {
     final config = campaign.config;
     final type = config['type']?.toString().toLowerCase() ?? 'modal';
 
+    // Callback Wrappers with NinjaCallbackManager dispatch
+    final wrappedOnImpression = () {
+      onImpression?.call();
+      NinjaCallbackManager.dispatchExperienceOpen(
+        campaignId: campaign.id,
+        displayType: type,
+      );
+    };
+
+    final wrappedOnDismiss = () {
+      onDismiss?.call();
+      NinjaCallbackManager.dispatchExperienceDismiss(
+        campaignId: campaign.id,
+        displayType: type,
+      );
+    };
+
+    final wrappedOnCTAClick = (String action, Map<String, dynamic>? data) {
+      onCTAClick?.call(action, data);
+      NinjaCallbackManager.dispatchComponentCtaClick(
+        campaignId: campaign.id,
+        widgetId: data?['id'] ?? 'unknown',
+        clickType: action,
+        additionalData: data,
+      );
+    };
+
     // Auto-track impression when widget builds
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      onImpression?.call();
+      wrappedOnImpression();
     });
 
     // Route to specific renderer based on type
@@ -42,8 +70,8 @@ class NinjaCampaignRenderer {
       case 'dialog':
         return ModalNudgeRenderer(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
 
       case 'bottomsheet':
@@ -51,8 +79,8 @@ class NinjaCampaignRenderer {
         // Previously used NativeNudgeRenderer (WebView) which had different scaling logic
         return BottomSheetNudgeRenderer(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
 
 
@@ -62,15 +90,15 @@ class NinjaCampaignRenderer {
       case 'bottom_banner':
         return BannerNudgeRenderer(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
 
       case 'tooltip':
         return TooltipNudgeRenderer(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
 
 
@@ -78,16 +106,16 @@ class NinjaCampaignRenderer {
       case 'pip':
         return PIPNudgeRendererV2(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
 
       case 'floater':
       case 'floating':
         return FloaterNudgeRenderer(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
 
       case 'scratch':
@@ -96,8 +124,8 @@ class NinjaCampaignRenderer {
       case 'scratch-card':
         return ScratchCardNudgeRenderer(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
 
       case 'story':
@@ -107,16 +135,16 @@ class NinjaCampaignRenderer {
       case 'story-carousel':
         return StoryCarouselNudgeRenderer(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
 
       case 'inline':
       case 'widget':
         return InlineNudgeRenderer(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
 
       default:
@@ -124,8 +152,8 @@ class NinjaCampaignRenderer {
         debugPrint('Unknown nudge type: $type, falling back to modal');
         return ModalNudgeRenderer(
           campaign: campaign,
-          onDismiss: onDismiss,
-          onCTAClick: onCTAClick,
+          onDismiss: wrappedOnDismiss,
+          onCTAClick: wrappedOnCTAClick,
         );
     }
   }
