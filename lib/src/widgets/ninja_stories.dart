@@ -191,9 +191,13 @@ class _NinjaStoriesState extends State<NinjaStories> {
   }
 
   void _openStory(Campaign story) {
-    AppNinja.track('story_opened', properties: {
+    // Track story open as impression for analytics
+    AppNinja.track('impression', properties: {
+      'nudgeId': story.id,
+      'campaignId': story.id,
       'story_id': story.id,
       'stories_id': widget.id,
+      'type': 'story',
     });
 
     AppNinja.showStory(story.id, '0');
@@ -271,7 +275,9 @@ class _StoryViewer extends StatelessWidget {
           child: IconButton(
             icon: const Icon(Icons.close, color: Colors.white, size: 30),
             onPressed: () {
-              AppNinja.track('story_closed', properties: {
+              AppNinja.track('campaign_dismissed', properties: {
+                'nudgeId': story.id,
+                'campaignId': story.id,
                 'story_id': story.id,
               });
               Navigator.of(context).pop();

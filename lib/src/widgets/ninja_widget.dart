@@ -86,11 +86,12 @@ class NinjaWidgetState extends State<NinjaWidget> {
         _visible = true;
       });
 
-      // Track impression
+      // Track impression with nudgeId for backend linkage
       AppNinja.track(
-        'campaign_impression',
+        'impression',
         properties: {
-          'campaign_id': _campaign!.id,
+          'nudgeId': _campaign!.id,
+          'campaignId': _campaign!.id,
           'campaign_type': _campaign!.type,
           'placement': widget.valueKey,
         },
@@ -207,9 +208,10 @@ class NinjaWidgetState extends State<NinjaWidget> {
               ElevatedButton(
                 onPressed: () {
                   AppNinja.track(
-                    'campaign_clicked',
+                    'click',
                     properties: {
-                      'campaign_id': _campaign!.id,
+                      'nudgeId': _campaign!.id,
+                      'campaignId': _campaign!.id,
                       'campaign_type': _campaign!.type,
                     },
                   );

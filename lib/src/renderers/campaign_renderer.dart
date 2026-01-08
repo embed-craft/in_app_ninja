@@ -4,6 +4,7 @@ import '../models/campaign.dart';
 import 'nudge_renderers/modal_nudge_renderer.dart';
 import 'nudge_renderers/banner_nudge_renderer.dart';
 import '../callbacks/ninja_callback_manager.dart';
+import '../app_ninja.dart';
 
 import 'nudge_renderers/tooltip_nudge_renderer.dart';
 import 'nudge_renderers/bottom_sheet_nudge_renderer.dart';
@@ -39,6 +40,15 @@ class NinjaCampaignRenderer {
         campaignId: campaign.id,
         displayType: type,
       );
+      // Send analytics to backend with campaign ID for report tracking
+      AppNinja.track(
+        'impression',
+        properties: {
+          'nudgeId': campaign.id,
+          'campaignId': campaign.id,
+          'type': type,
+        },
+      );
     };
 
     final wrappedOnDismiss = () {
@@ -56,6 +66,17 @@ class NinjaCampaignRenderer {
         widgetId: data?['id'] ?? 'unknown',
         clickType: action,
         additionalData: data,
+      );
+      // Send click analytics to backend with campaign ID
+      AppNinja.track(
+        'click',
+        properties: {
+          'nudgeId': campaign.id,
+          'campaignId': campaign.id,
+          'type': type,
+          'action': action,
+          ...?data,
+        },
       );
     };
 

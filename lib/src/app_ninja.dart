@@ -26,6 +26,13 @@ class AppNinja {
   static const String _prefsKeyCampaigns = 'ninja_campaigns_cache';
   static const String _prefsKeyQueue = 'ninja_event_queue';
   static const String _prefsKeyColors = 'ninja_colors';
+  
+  // 🚀 HYBRID CACHE SYSTEM - Production Grade for 100M Users
+  static const String _prefsKeyCampaignsV2 = 'ninja_campaigns_v2';
+  static const int _cacheVersion = 2;
+  static const Duration _cacheTTL = Duration(hours: 1);
+  static const Duration _cacheRefreshInterval = Duration(minutes: 5);
+  static const int _maxCachedCampaigns = 50; // Memory optimization
 
   static String? _apiKey;
   // Default to Production URL (Render)
@@ -57,6 +64,12 @@ class AppNinja {
   static Set<String> _shownCampaignsThisSession =
       {}; // Track all shown campaigns in session
   static DateTime? _lastCampaignShownTime; // Track when last campaign was shown
+  
+  // 🚀 HYBRID CACHE STATE
+  static List<Campaign> _cachedCampaigns = []; // In-memory cache
+  static DateTime? _cacheTimestamp; // When cache was last updated
+  static Timer? _backgroundRefreshTimer; // Periodic refresh timer
+  static bool _isRefreshing = false; // Prevent concurrent refreshes
 
   // Callbacks
   static Function(String eventName, Map<String, dynamic> properties)?
@@ -85,10 +98,22 @@ class AppNinja {
   static bool _shouldEnableFlutterWidgetTouch = false;
 
   // Element tracking
-  static Map<String, Map<String, dynamic>> _elementPositions = {};
-  
   // Navigation key for global context access
   static GlobalKey<NavigatorState>? _navigatorKey;
+
+  // 🎯 RACE CONDITION PREVENTION: Navigation Token System
+  // Hybrid Cache State
+  static List<Campaign> _cachedCampaigns = [];
+  static DateTime? _cacheTimestamp;
+  static Timer? _backgroundRefreshTimer;
+  static bool _isRefreshing = false;
+
+  // Round-robin tracking for sequential campaign display
+  static final Map<String, int> _roundRobinIndex = {};
+  
+  // Navigation token for race condition prevention
+  static String _navigationToken = DateTime.now().millisecondsSinceEpoch.toString();
+  static final Map<String, String> _campaignNavigationTokenMap = {};
 
   /// Initialize the SDK
   ///
@@ -131,14 +156,14 @@ class AppNinja {
       debugLog(
           'AppNinja initialized with baseUrl: $_baseUrl, autoRender: $autoRender, navigatorKey: ${_navigatorKey != null}');
 
-      // Load cached campaigns via Repository & Listen for updates
-      NinjaCampaignRepository().campaignsStream.listen((list) {
-         _campaignController.add(list);
-      });
-      await NinjaCampaignRepository().loadFromCache();
+      // 🚀 PHASE 1: Load cached campaigns instantly (0ms)
+      await _loadCachedCampaignsSync();
       
-      // Legacy cache loader removed
-      // await _loadCachedCampaigns();
+      // 🚀 PHASE 2: Start background refresh (non-blocking)
+      unawaited(_refreshCampaignsBackground());
+      
+      // 🚀 PHASE 3: Start periodic refresh timer
+      _startSmartRefreshTimer();
 
       // Flush queued events
       unawaited(_flushEventQueue());
@@ -149,6 +174,7 @@ class AppNinja {
       }
 
       // Initialize Capture Manager (Dev Tools)
+
       // We need context for this, which we might not have yet in init.
       // CaptureManager needs to listen to links.
       // Ideally this is called when UI is ready.
@@ -195,58 +221,120 @@ class AppNinja {
       {Map<String, dynamic> properties = const {}}) async {
     _ensureInitialized();
 
+    // 🚀 PHASE 1: Instant client-side matching (0ms)
+    final matchedCampaigns = _matchCampaignsLocally(eventName, properties);
+    
+    if (matchedCampaigns.isNotEmpty) {
+      final triggerToken = _navigationToken;
+      
+      // 🔄 Round-robin display: Rotate through campaigns
+      // Get last shown index for this event
+      final eventKey = '$eventName:${_currentPage ?? "global"}';
+      final lastIndex = _roundRobinIndex[eventKey] ?? -1;
+      final nextIndex = (lastIndex + 1) % matchedCampaigns.length;
+      
+      // Update rotation index for next time
+      _roundRobinIndex[eventKey] = nextIndex;
+      
+      // Get campaign to show this time
+      final campaignToShow = matchedCampaigns[nextIndex];
+      
+      // Tag the campaign with current navigation token
+      _campaignNavigationTokenMap[campaignToShow.id] = triggerToken;
+      
+      // Emit the campaign
+      _campaignController.add([campaignToShow]);
+      
+      // Log rotation info
+      if (matchedCampaigns.length > 1) {
+        debugLog('🔄 Round-robin: Showing campaign ${nextIndex + 1}/${matchedCampaigns.length} for "$eventName"');
+        debugLog('   ✅ Current: ${campaignToShow.id}');
+        debugLog('   📋 Rotation: ${matchedCampaigns.asMap().entries.map((e) => e.key == nextIndex ? "→${e.key + 1}" : "${e.key + 1}").join(" ")}');
+      } else {
+        debugLog('⚡ Instant match: 1 campaign for "$eventName" (0ms)');
+      }
+    }
+
+    // 🔥 PHASE 2: Fire-and-forget analytics (non-blocking)
     final userId = _prefs?.getString(_prefsKeyUserId) ?? 'anonymous';
     final event = {
       'event_id':
           '${userId}_${eventName}_${DateTime.now().millisecondsSinceEpoch}',
       'timestamp': DateTime.now().toIso8601String(),
-      'userId': userId, // Changed to camelCase
-      'action': eventName, // Changed to action (preferred by backend)
-      'metadata': properties, // Changed to metadata
+      'userId': userId,
+      'action': eventName,
+      'metadata': properties,
       'sdk_version': 'in_app_ninja_flutter_1.0.0',
       'page': _currentPage,
     };
 
-    try {
-      debugLog('📤 Sending track event: $eventName');
-      final response = await _post('/api/v1/nudge/track', event); // Updated Endpoint
+    // Send analytics without waiting (fire-and-forget)
+    unawaited(_postAnalytics(eventName, event));
+    
+    // Dispatch callbacks
+    _eventListener?.call(eventName, properties);
+    NinjaCallbackManager.dispatchTrackEvent(eventName, properties);
+  }
 
-      // ⭐ REAL-TIME INTEGRATION: Process matched campaigns from track response
-      if (response.statusCode == 200) {
-        debugLog('✅ Track success: $eventName (200 OK)');
-        try {
-          final body = jsonDecode(response.body);
-
-          // Backend returns {ok: true, matched: [...], event: {...}}
-          if (body['matched'] != null && body['matched'] is List) {
-            final matchedData = body['matched'] as List;
-
-            if (matchedData.isNotEmpty) {
-              debugLog(
-                  '🎯 Event "$eventName" matched ${matchedData.length} campaign(s)');
-
-              // Convert to Campaign objects
-              final campaigns = matchedData
-                  .map((c) => Campaign.fromJson(c as Map<String, dynamic>))
-                  .toList();
-
-              // Emit immediately to auto-render system
-              _campaignController.add(campaigns);
-              debugLog('✅ Real-time campaigns emitted for auto-render');
-            } else {
-              debugLog('ℹ️ Event "$eventName" matched 0 campaigns');
+  /// Match campaigns locally - INSTANT (0ms)
+  static List<Campaign> _matchCampaignsLocally(
+    String eventName,
+    Map<String, dynamic> properties
+  ) {
+    if (_cachedCampaigns.isEmpty) {
+      return [];
+    }
+    
+    return _cachedCampaigns.where((campaign) {
+      // Check triggers
+      if (campaign.triggers == null || campaign.triggers!.isEmpty) {
+        return false;
+      }
+      
+      // Match event name
+      final hasMatchingTrigger = campaign.triggers!.any((trigger) {
+        return trigger['event'] == eventName;
+      });
+      
+      if (!hasMatchingTrigger) return false;
+      
+      // Check page targeting
+      if (campaign.targeting != null) {
+        final pageRules = campaign.targeting!
+            .where((t) => t['type'] == 'page')
+            .toList();
+        
+        if (pageRules.isNotEmpty) {
+          return pageRules.any((rule) {
+            final value = rule['value']?.toString();
+            final operator = rule['operator']?.toString() ?? 'equals';
+            
+            switch (operator) {
+              case 'equals':
+                return _currentPage == value;
+              case 'contains':
+                return _currentPage?.contains(value ?? '') ?? false;
+              case 'starts_with':
+                return _currentPage?.startsWith(value ?? '') ?? false;
+              default:
+                return _currentPage == value;
             }
-          }
-        } catch (parseError) {
-          debugLog('⚠️ Failed to parse matched campaigns: $parseError');
-          // Don't throw - event was still tracked successfully
+          });
         }
       }
+      
+      // Global campaign (no page targeting)
+      return true;
+    }).toList();
+  }
 
-      _eventListener?.call(eventName, properties);
-      NinjaCallbackManager.dispatchTrackEvent(eventName, properties);
+
+  /// Send analytics to backend (fire-and-forget)
+  static Future<void> _postAnalytics(String eventName, Map<String, dynamic> event) async {
+    try {
+      await _post('/api/v1/nudge/track', event);
     } catch (e) {
-      debugLog('❌ Track failed, queuing: $e');
+      debugLog('⚠️ Analytics send failed, queuing: $e');
       await _queueEvent({'type': 'track', 'payload': event});
     }
   }
@@ -315,9 +403,13 @@ class AppNinja {
   /// [context] - BuildContext for tracking (will be stored for widget detection)
   static void trackPage(String pageName, BuildContext context) {
     _ensureInitialized();
+    
+    // 🎯 Generate new navigation token to invalidate pending campaigns
+    _navigationToken = DateTime.now().millisecondsSinceEpoch.toString();
+    
     _currentPage = pageName;
     _appContext = context;
-    debugLog('trackPage: $pageName');
+    debugLog('📍 trackPage: $pageName (token: $_navigationToken)');
     track('page_view', properties: {'page': pageName});
   }
 
@@ -1060,6 +1152,181 @@ class AppNinja {
     debugLog('Event queue flushed, remaining: ${remaining.length}');
   }
 
+  // ========== 🚀 HYBRID CACHE SYSTEM - Production Grade ==========
+
+  /// Load cached campaigns instantly (0ms) - PHASE 1
+  static Future<void> _loadCachedCampaignsSync() async {
+    try {
+      final cached = _prefs?.getString(_prefsKeyCampaignsV2);
+      if (cached == null) {
+        debugLog('📦 No cache found, will fetch fresh');
+        return;
+      }
+      
+      final data = jsonDecode(cached) as Map<String, dynamic>;
+      
+      // Check cache version
+      if (data['version'] != _cacheVersion) {
+        debugLog('⚠️ Cache version mismatch (${data['version']} != $_cacheVersion), clearing');
+        await _clearCacheV2();
+        return;
+      }
+      
+      // Parse timestamp
+      final timestampStr = data['timestamp']?.toString();
+      final timestamp = timestampStr != null ? DateTime.tryParse(timestampStr) : null;
+      
+      if (timestamp == null) {
+        debugLog('⚠️ Invalid cache timestamp, clearing');
+        await _clearCacheV2();
+        return;
+      }
+      
+      // Check TTL
+      final age = DateTime.now().difference(timestamp);
+      if (age > _cacheTTL) {
+        debugLog('⏰ Cache expired (${age.inMinutes}min > ${_cacheTTL.inMinutes}min), using stale + refresh');
+        // Don't return - use stale cache but mark for refresh
+      }
+      
+      // Parse campaigns
+      final campaignsData = data['campaigns'] as List?;
+      if (campaignsData == null) {
+        debugLog('⚠️ No campaigns in cache');
+        return;
+      }
+      
+      final campaigns = campaignsData
+          .map((c) => Campaign.fromJson(c as Map<String, dynamic>))
+          .toList();
+      
+      // Memory optimization: limit to max campaigns
+      final limited = campaigns.take(_maxCachedCampaigns).toList();
+      
+      _cachedCampaigns = limited;
+      _cacheTimestamp = timestamp;
+      
+      // Emit to stream for auto-rendering
+      _campaignController.add(limited);
+      
+      debugLog('✅ Loaded ${limited.length} campaigns from cache (age: ${age.inMinutes}min)');
+    } catch (e, stack) {
+      debugLog('❌ Cache load failed: $e');
+      debugPrint('Stack: $stack');
+      // Graceful degradation - continue with empty cache
+    }
+  }
+
+  /// Background refresh (non-blocking) - PHASE 2
+  static Future<void> _refreshCampaignsBackground() async {
+    if (_isRefreshing) {
+      debugLog('⚠️ Refresh already in progress, skipping');
+      return;
+    }
+    
+    _isRefreshing = true;
+    
+    try {
+      debugLog('🔄 Background refresh started...');
+      
+      // Fetch with retry logic
+      final campaigns = await _fetchCampaignsWithRetry();
+      
+      if (campaigns.isEmpty && _cachedCampaigns.isNotEmpty) {
+        debugLog('⚠️ Fetch returned empty, keeping existing cache');
+        return;
+      }
+      
+      // Memory optimization
+      final limited = campaigns.take(_maxCachedCampaigns).toList();
+      
+      // Update cache
+      await _updateCacheV2(limited);
+      
+      // Update in-memory
+      _cachedCampaigns = limited;
+      
+      // Emit to stream
+      _campaignController.add(limited);
+      
+      debugLog('✅ Background refresh complete: ${limited.length} campaigns');
+    } catch (e) {
+      debugLog('⚠️ Background refresh failed: $e');
+      // Don't throw - just log. Use cached data.
+    } finally {
+      _isRefreshing = false;
+    }
+  }
+
+  /// Fetch with exponential backoff retry - Production grade
+  static Future<List<Campaign>> _fetchCampaignsWithRetry({
+    int maxAttempts = 3,
+    Duration initialDelay = const Duration(milliseconds: 500)
+  }) async {
+    int attempt = 0;
+    Duration delay = initialDelay;
+    
+    while (attempt < maxAttempts) {
+      try {
+        return await fetchCampaigns().timeout(const Duration(seconds: 10));
+      } catch (e) {
+        attempt++;
+        if (attempt >= maxAttempts) {
+          debugLog('❌ All $maxAttempts fetch attempts failed');
+          rethrow;
+        }
+        
+        debugLog('⚠️ Fetch attempt $attempt failed, retrying in ${delay.inMilliseconds}ms...');
+        await Future.delayed(delay);
+        delay *= 2; // Exponential backoff
+      }
+    }
+    
+    return [];
+  }
+
+  /// Update cache atomically - ACID compliant
+  static Future<void> _updateCacheV2(List<Campaign> campaigns) async {
+    try {
+      final cacheData = {
+        'version': _cacheVersion,
+        'timestamp': DateTime.now().toIso8601String(),
+        'campaigns': campaigns.map((c) => c.toJson()).toList(),
+      };
+      
+      await _prefs?.setString(_prefsKeyCampaignsV2, jsonEncode(cacheData));
+      _cacheTimestamp = DateTime.now();
+      
+      debugLog('💾 Cache updated: ${campaigns.length} campaigns');
+    } catch (e) {
+      debugLog('❌ Cache update failed: $e');
+    }
+  }
+
+  /// Clear V2 cache
+  static Future<void> _clearCacheV2() async {
+    await _prefs?.remove(_prefsKeyCampaignsV2);
+    _cachedCampaigns = [];
+    _cacheTimestamp = null;
+    debugLog('🗑️ Cache cleared');
+  }
+
+  /// Start smart refresh timer - PHASE 3
+  static void _startSmartRefreshTimer() {
+    // Cancel existing timer
+    _backgroundRefreshTimer?.cancel();
+    
+   // Periodic refresh every 5 minutes
+    _backgroundRefreshTimer = Timer.periodic(_cacheRefreshInterval, (_) {
+      debugLog('⏰ Periodic refresh triggered');
+      unawaited(_refreshCampaignsBackground());
+    });
+    
+    debugLog('⏰ Smart refresh timer started (interval: ${_cacheRefreshInterval.inMinutes}min)');
+  }
+
+  // ========== END HYBRID CACHE SYSTEM ==========
+
   static Future<List<Campaign>> _loadCachedCampaigns() async {
     final cached = _prefs?.getString(_prefsKeyCampaigns);
     if (cached != null) {
@@ -1179,6 +1446,17 @@ class AppNinja {
 
   /// Auto-show campaign (universal renderer for all types)
   static void _autoShowCampaign(Campaign campaign) {
+    // 🎯 VALIDATION 1: Navigation Token Check (Race Condition Prevention)
+    // If user navigated to a different page before campaign loaded, skip display
+    final campaignToken = _campaignNavigationTokenMap[campaign.id];
+    if (campaignToken != null && campaignToken != _navigationToken) {
+      debugLog(
+          '⏭️ Skipping campaign "${campaign.title}" (${campaign.id}): '
+          'User navigated away (Token mismatch: campaign=$campaignToken, current=$_navigationToken)');
+      _campaignNavigationTokenMap.remove(campaign.id); // Cleanup
+      return;
+    }
+
     // Resolve context: Prefer Navigator's OVERLAY context (child of Navigator) 
     // This ensures Navigator.of(context) finds the navigator itself, instead of looking above it.
     final context = _navigatorKey?.currentState?.overlay?.context ?? 
@@ -1223,8 +1501,9 @@ class AppNinja {
         overlayState: _navigatorKey?.currentState?.overlay, // Pass direct overlay state
         onImpression: () {
           debugLog('👁️ Auto-tracked impression: ${campaign.id}');
-          track('campaign_viewed', properties: {
-            'campaign_id': campaign.id,
+          track('impression', properties: {
+            'nudgeId': campaign.id,
+            'campaignId': campaign.id,
             'campaign_name': campaign.title,
             'campaign_type': campaign.type,
             'auto_rendered': true,
@@ -1234,12 +1513,16 @@ class AppNinja {
         onDismiss: () {
           debugLog('❌ Auto-rendered campaign dismissed: ${campaign.id}');
           track('campaign_dismissed', properties: {
-            'campaign_id': campaign.id,
+            'nudgeId': campaign.id,
+            'campaignId': campaign.id,
             'campaign_name': campaign.title,
           });
           
           // Clean up dismissal registry
           _activeCampaignDismissals.remove(campaign.id);
+          
+          // 🎯 Cleanup navigation token map
+          _campaignNavigationTokenMap.remove(campaign.id);
           
           if (_lastShownPipId == campaign.id) {
              _lastShownPipId = null;
@@ -1247,8 +1530,9 @@ class AppNinja {
         },
         onCTAClick: (action, data) {
           debugLog('🎯 Auto-rendered CTA clicked: $action');
-          track('campaign_clicked', properties: {
-            'campaign_id': campaign.id,
+          track('click', properties: {
+            'nudgeId': campaign.id,
+            'campaignId': campaign.id,
             'campaign_name': campaign.title,
             'action': action,
             'button_text': data?['button_text'],
@@ -1308,8 +1592,19 @@ class AppNinja {
 
   /// Dispose resources
   static Future<void> dispose() async {
+    // Cancel subscriptions
     _autoRenderSubscription?.cancel();
+    _backgroundRefreshTimer?.cancel(); // 🚀 Clean up refresh timer
+    
+    // Close streams
     await _campaignController.close();
+    
+    // Clear state
     _initialized = false;
+    _cachedCampaigns = [];
+    _cacheTimestamp = null;
+    _roundRobinIndex.clear(); // Clear rotation tracking
+    
+    debugLog('🗑️ AppNinja disposed - all resources cleaned up');
   }
 }

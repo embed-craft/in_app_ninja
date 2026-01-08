@@ -134,8 +134,9 @@ class _NinjaAppComponentState extends State<NinjaAppComponent> {
                   const SizedBox(height: 12),
                   ElevatedButton(
                     onPressed: () {
-                      AppNinja.track('campaign_action_clicked', properties: {
-                        'campaign_id': campaign.id,
+                      AppNinja.track('click', properties: {
+                        'nudgeId': campaign.id,
+                        'campaignId': campaign.id,
                         'component_id': widget.id,
                         'action_url': actionUrl,
                       });
