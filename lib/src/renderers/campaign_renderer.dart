@@ -33,6 +33,10 @@ class NinjaCampaignRenderer {
     final config = campaign.config;
     final type = config['type']?.toString().toLowerCase() ?? 'modal';
 
+    debugPrint('🎨 [CampaignRenderer] Rendering campaign: ${campaign.id}');
+    debugPrint('   Type: "$type" (Raw config type: ${config['type']})');
+    debugPrint('   Config keys: ${config.keys.toList()}');
+
     // Callback Wrappers with NinjaCallbackManager dispatch
     final wrappedOnImpression = () {
       onImpression?.call();

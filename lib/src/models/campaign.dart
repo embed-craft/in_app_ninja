@@ -7,6 +7,7 @@ class Campaign {
   final Map<String, dynamic> config;
   final List<dynamic>? targeting; // Changed from Map to List
   final List<dynamic>? triggers; // Added
+  final String? trigger; // ✅ FIX: Single trigger string from backend
   final List<dynamic>? layers;
   final List<Map<String, dynamic>>? interfaces; // NEW: Sub-interfaces for linked UI flows
   final String? variant;
@@ -25,6 +26,7 @@ class Campaign {
     required this.config,
     this.targeting,
     this.triggers,
+    this.trigger,
     this.layers,
     this.interfaces,
     this.variant,
@@ -49,6 +51,8 @@ class Campaign {
       triggers: json['triggers'] != null && json['triggers'] is List
           ? List<dynamic>.from(json['triggers'])
           : null,
+      // ✅ FIX: Backend uses 'trigger_event', Dashboard uses 'trigger'
+      trigger: json['trigger']?.toString() ?? json['trigger_event']?.toString(),
       layers: json['layers'] != null && json['layers'] is List
           ? List<dynamic>.from(json['layers'])
           : null,
@@ -76,6 +80,7 @@ class Campaign {
       'config': config,
       'targeting': targeting,
       'triggers': triggers,
+      'trigger': trigger,
       'layers': layers,
       'interfaces': interfaces,
       'variant': variant,

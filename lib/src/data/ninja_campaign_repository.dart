@@ -66,12 +66,31 @@ class NinjaCampaignRepository {
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
+        debugPrint('📡 [NinjaRepo] API Response: ${response.body.substring(0, response.body.length.clamp(0, 500))}...');
         List<Campaign> campaigns = [];
 
-        if (body is Map && body['campaigns'] is List) {
-          campaigns = (body['campaigns'] as List).map((c) => Campaign.fromJson(c)).toList();
+        // ✅ FIX: Handle multiple backend response formats
+        // 1. { campaigns: [...] }
+        // 2. { data: [...] }
+        // 3. { data: { single_campaign } }
+        // 4. [ ... ] direct array
+        
+        if (body is Map) {
+          var campaignData = body['campaigns'] ?? body['data'] ?? body['nudges'];
+          
+          if (campaignData is List) {
+            campaigns = campaignData.map((c) => Campaign.fromJson(c)).toList();
+          } else if (campaignData is Map) {
+            // Single campaign object - wrap in list
+            campaigns = [Campaign.fromJson(Map<String, dynamic>.from(campaignData))];
+          }
         } else if (body is List) {
           campaigns = body.map((c) => Campaign.fromJson(c)).toList();
+        }
+        
+        debugPrint('📊 [NinjaRepo] Parsed ${campaigns.length} campaigns from response');
+        if (campaigns.isNotEmpty) {
+          debugPrint('   🎯 First campaign: "${campaigns[0].title}" trigger="${campaigns[0].trigger}" status="${campaigns[0].status}"');
         }
 
         // Save to DB (Transaction)
@@ -106,6 +125,7 @@ class NinjaCampaignRepository {
           'title': c.title,
           'config': jsonEncode(c.config),
           'triggers': jsonEncode(c.triggers),
+          'trigger': c.trigger, // ✅ FIX: Save trigger field for matching
           'layers': c.layers != null ? jsonEncode(c.layers) : null,
           'interfaces': c.interfaces != null ? jsonEncode(c.interfaces) : null,
           'start_date': c.startDate?.toIso8601String(),
@@ -118,5 +138,14 @@ class NinjaCampaignRepository {
       }
     });
     debugPrint('💾 [NinjaRepo] Cached ${campaigns.length} campaigns to SQLite');
+  }
+
+  /// Clears the local SQLite cache completely
+  Future<void> clearCache() async {
+    final db = await _dbHelper.database;
+    await db.delete('campaigns');
+    // Also reset the stream
+    _campaignsSubject.add([]);
+    debugPrint('🗑️ [NinjaRepo] SQLite Cache Cleared');
   }
 }

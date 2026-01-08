@@ -25,11 +25,13 @@ class EmbedWidgetWrapper extends StatefulWidget {
 }
 
 class _EmbedWidgetWrapperState extends State<EmbedWidgetWrapper> {
+  final LayerLink _link = LayerLink();
+
   @override
   void initState() {
     super.initState();
     // Register this widget as a target when it mounts
-    AppNinja.registerTarget(widget.id, context);
+    AppNinja.registerTarget(widget.id, context, link: _link);
   }
 
   @override
@@ -38,7 +40,7 @@ class _EmbedWidgetWrapperState extends State<EmbedWidgetWrapper> {
     // Handle ID changes
     if (widget.id != oldWidget.id) {
       AppNinja.unregisterTarget(oldWidget.id);
-      AppNinja.registerTarget(widget.id, context);
+      AppNinja.registerTarget(widget.id, context, link: _link);
     }
   }
 
@@ -51,6 +53,9 @@ class _EmbedWidgetWrapperState extends State<EmbedWidgetWrapper> {
 
   @override
   Widget build(BuildContext context) {
-    return widget.child;
+    return CompositedTransformTarget(
+      link: _link,
+      child: widget.child,
+    );
   }
 }

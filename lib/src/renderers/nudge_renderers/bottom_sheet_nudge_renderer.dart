@@ -31,11 +31,58 @@ class BottomSheetNudgeRenderer extends StatefulWidget {
   State<BottomSheetNudgeRenderer> createState() => _BottomSheetNudgeRendererState();
 }
 
+/// Helper class to store fully parsed config values
+class ParsedBottomSheetConfig {
+  final Map<String, dynamic> rawConfig;
+  final double? sheetHeight;
+  final Color backgroundColor;
+  final double topLeftRadius;
+  final double topRightRadius;
+  final EdgeInsets padding;
+  final bool hasAbsolutePositionedLayers;
+  final bool showCloseButton;
+  final Color backdropColor;
+  final double backdropBlur;
+  final bool dismissOnClick;
+  final String? backgroundImageUrl;
+  final double? maxHeight;
+  final List<BoxShadow> shadows;
+  final bool isScrollable;
+  final bool hasDragHandle;
+  final bool swipeToDismiss;
+  final Map<String, dynamic>? action;
+
+  ParsedBottomSheetConfig({
+    required this.rawConfig,
+    this.sheetHeight,
+    required this.backgroundColor,
+    required this.topLeftRadius,
+    required this.topRightRadius,
+    required this.padding,
+    this.hasAbsolutePositionedLayers = false,
+    this.showCloseButton = false,
+    required this.backdropColor,
+    required this.backdropBlur,
+    this.dismissOnClick = true,
+    this.backgroundImageUrl,
+    this.maxHeight,
+    required this.shadows,
+    this.isScrollable = false,
+    this.hasDragHandle = false,
+    this.swipeToDismiss = false,
+    this.action,
+  });
+}
+
 class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<Offset> _slideAnimation;
   late Animation<double> _fadeAnimation;
   final Map<String, dynamic> _formData = {};
+  
+  // Cache for parsed config
+  ParsedBottomSheetConfig? _cachedConfig;
+  double? _lastScreenWidth;
 
   @override
   void initState() {
@@ -57,6 +104,23 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
     );
 
     _controller.forward();
+    
+    // 🚀 OPTIMIZATION: Precache background image for instant rendering
+    if (_cachedConfig?.backgroundImageUrl != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+           precacheImage(NetworkImage(_cachedConfig!.backgroundImageUrl!), context);
+        }
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(BottomSheetNudgeRenderer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.campaign != oldWidget.campaign) {
+      _cachedConfig = null; // Invalidate cache if campaign updates
+    }
   }
 
   @override
@@ -71,8 +135,6 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
   }
 
   Future<void> _handleAction(String action, [Map<String, dynamic>? data]) async {
-    debugPrint('InAppNinja: 🎯 BottomSheet Action triggered: $action, data: $data');
-    
     switch (action) {
       case 'dismiss':
       case 'close':
@@ -83,7 +145,6 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       case 'deeplink':
         final url = data?['url'] as String?;
         if (url != null && url.isNotEmpty) {
-          debugPrint('InAppNinja: 🔗 Opening URL: $url');
           try {
             final uri = Uri.parse(url);
             final isWebUrl = uri.scheme == 'http' || uri.scheme == 'https';
@@ -120,7 +181,6 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       case 'interface':
         final interfaceId = data?['interfaceId'] as String?;
         if (interfaceId != null && interfaceId.isNotEmpty) {
-          // Import at top: import '../../utils/interface_handler.dart';
           _showInterface(interfaceId);
         }
         break;
@@ -131,7 +191,6 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
 
 
   void _showInterface(String interfaceId) {
-    // FIX: Use centralized InterfaceHandler instead of duplicate code
     InterfaceHandler.show(
       interfaceId: interfaceId,
       parentCampaign: widget.campaign,
@@ -143,159 +202,67 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
 
   @override
   Widget build(BuildContext context) {
-    final config = widget.campaign.config;
     final screenWidth = MediaQuery.of(context).size.width;
     final screenHeight = MediaQuery.of(context).size.height;
     
-    // CRITICAL DEBUG: Verify renderer is being called
-    debugPrint('=== InAppNinja: 🚀 BOTTOMSHEET BUILD CALLED ===');
-    debugPrint('InAppNinja: 📱 Screen: ${screenWidth}x${screenHeight}');
-    debugPrint('InAppNinja: 📦 Components: ${(config['components'] as List?)?.length ?? 0}');
-    
-    // MODAL PARITY: Resolve config
-    final responsiveConfig = _resolveResponsiveConfig(config, screenWidth);
-    
-    // Parse height
-    double? sheetHeight;
-    final rHeight = responsiveConfig['height'];
-    if (rHeight is num) {
-      sheetHeight = rHeight.toDouble();
-    } else if (rHeight is String) {
-      if (rHeight == 'auto') {
-        sheetHeight = null;
-      } else if (rHeight.endsWith('%')) {
-        final pct = double.tryParse(rHeight.replaceAll('%', ''));
-        if (pct != null) sheetHeight = screenHeight * pct / 100;
-      } else {
-        sheetHeight = double.tryParse(rHeight.replaceAll('px', ''));
-      }
+    // Strict Caching Strategy: Parse ONCE
+    if (_cachedConfig == null || _lastScreenWidth != screenWidth) {
+      _cachedConfig = _resolveAndParseConfig(widget.campaign.config, screenWidth, context);
+      _lastScreenWidth = screenWidth;
     }
+    final cfg = _cachedConfig!;
     
-    final backgroundColor = NinjaLayerUtils.parseColor(responsiveConfig['backgroundColor']) ?? Colors.white;
-    final borderRadiusRaw = responsiveConfig['borderRadius'];
-    
-    double topLeftRadius = 16.0;
-    double topRightRadius = 16.0;
-    
-    if (borderRadiusRaw is num) {
-      topLeftRadius = borderRadiusRaw.toDouble();
-      topRightRadius = borderRadiusRaw.toDouble();
-    } else if (borderRadiusRaw is Map) {
-      topLeftRadius = (borderRadiusRaw['topLeft'] as num?)?.toDouble() ?? 16.0;
-      topRightRadius = (borderRadiusRaw['topRight'] as num?)?.toDouble() ?? 16.0;
-    }
-
-    // MODAL PARITY: Check for absolute positioned layers to skip padding
-    bool hasAbsolutePositionedLayers = false;
-    final components = responsiveConfig['components'] as List?;
-    if (components != null) {
-      for (final component in components) {
-        if (component is Map<String, dynamic>) {
-          final style = component['style'] as Map<String, dynamic>? ?? {};
-          if (style['position'] == 'absolute' || style['position'] == 'fixed') {
-            hasAbsolutePositionedLayers = true;
-            break;
-          }
-          // Check children too
-          final children = component['children'] as List?;
-          if (children != null) {
-            for (final child in children) {
-              if (child is Map<String, dynamic>) {
-                final childStyle = child['style'] as Map<String, dynamic>? ?? {};
-                if (childStyle['position'] == 'absolute' || childStyle['position'] == 'fixed') {
-                  hasAbsolutePositionedLayers = true;
-                  break;
-                }
-              }
-            }
-          }
-          if (hasAbsolutePositionedLayers) break;
-        }
-      }
-    }
-    debugPrint('InAppNinja: 🎯 BottomSheet hasAbsolutePositionedLayers=$hasAbsolutePositionedLayers');
-    
-    final padding = hasAbsolutePositionedLayers 
-        ? EdgeInsets.zero 
-        : NinjaLayerUtils.parsePadding(responsiveConfig['padding']);
-    final showCloseButton = responsiveConfig['showCloseButton'] == true;
-    
-    final backdropOverlayColor = NinjaLayerUtils.parseColor(responsiveConfig['overlay']?['color']) ?? Colors.black;
-    final backdropOpacity = (responsiveConfig['overlay']?['opacity'] as num?)?.toDouble() ?? 0.5;
-    final backdropColor = backdropOverlayColor.withOpacity(backdropOpacity);
-    
-    final backgroundImageUrl = responsiveConfig['backgroundImageUrl'] as String?;
-    
-    final maxHeight = NinjaLayerUtils.parseResponsiveSize(responsiveConfig['maxHeight'], context, isVertical: true) ?? screenHeight * 0.9;
-    
-    final shadows = NinjaLayerUtils.parseShadows(responsiveConfig['shadows']) ?? [
-      BoxShadow(
-        color: Colors.black.withOpacity(0.12),
-        blurRadius: 16,
-        offset: const Offset(0, -4),
-      )
-    ];
-
-    // MODAL PARITY: Use sheet dimensions for parentSize
+    // Use sheet dimensions for parentSize
     final sheetWidth = screenWidth;
-    final effectiveHeight = sheetHeight ?? maxHeight;
-    final parentSize = Size(sheetWidth, effectiveHeight);
-    debugPrint('InAppNinja: 📐 BottomSheet parentSize: ${parentSize.width}x${parentSize.height}');
+    final effectiveHeight = cfg.sheetHeight ?? cfg.maxHeight;
+    final parentSize = Size(sheetWidth, effectiveHeight ?? screenHeight); 
 
     Widget sheetContent = Container(
       width: sheetWidth,
-      height: sheetHeight,
+      height: cfg.sheetHeight,
       constraints: BoxConstraints(
         minHeight: 100,
-        maxHeight: maxHeight,
+        maxHeight: cfg.maxHeight ?? screenHeight * 0.9,
       ),
       decoration: BoxDecoration(
-        color: backgroundColor,
+        color: cfg.backgroundColor,
         borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(topLeftRadius),
-          topRight: Radius.circular(topRightRadius),
+          topLeft: Radius.circular(cfg.topLeftRadius),
+          topRight: Radius.circular(cfg.topRightRadius),
         ),
-        boxShadow: shadows,
-        // MODAL PARITY: BoxFit.fill + topLeft for layer alignment
-        // FIX: Moved background image to Stack to handle 404 errors gracefully
-        // image: backgroundImageUrl != null && backgroundImageUrl.isNotEmpty
-        //     ? DecorationImage(
-        //         image: NetworkImage(backgroundImageUrl),
-        //         fit: BoxFit.fill,
-        //         alignment: Alignment.topLeft,
-        //       )
-        //     : null,
+        boxShadow: cfg.shadows,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(topLeftRadius),
-          topRight: Radius.circular(topRightRadius),
+          topLeft: Radius.circular(cfg.topLeftRadius),
+          topRight: Radius.circular(cfg.topRightRadius),
         ),
         child: Stack(
           children: [
-            // FIX: Background Image in Stack layer to handle 404s
-             if (backgroundImageUrl != null && backgroundImageUrl.isNotEmpty)
+            // Background Image
+             if (cfg.backgroundImageUrl != null)
                Positioned.fill(
                  child: Image.network(
-                   backgroundImageUrl,
+                   cfg.backgroundImageUrl!,
                    fit: BoxFit.fill,
                    alignment: Alignment.topLeft,
                    errorBuilder: (context, error, stackTrace) {
-                     debugPrint('InAppNinja: ❌ Failed to load background image: $backgroundImageUrl');
                      return const SizedBox.shrink(); // Fail silently
                    },
                  ),
                ),
             SingleChildScrollView(
-              physics: responsiveConfig['scrollable'] == true ? null : const NeverScrollableScrollPhysics(),
+              padding: cfg.padding,
+              physics: cfg.isScrollable ? null : const NeverScrollableScrollPhysics(),
+              // ✅ OPTIMIZATION: Removed invalid shrinkWrap. Parent Container constraints handle sizing.
               child: Padding(
-                padding: padding ?? EdgeInsets.zero,
+                padding: cfg.padding,
                 // MODAL PARITY: Use _buildContent with parentSize
-                child: _buildContent(responsiveConfig, width: sheetWidth, height: effectiveHeight),
+                child: _buildContent(cfg.rawConfig, width: sheetWidth, height: effectiveHeight),
               ),
             ),
-            // Handle bar
-            if (responsiveConfig['dragHandle'] == true)
+            // Drag Handle
+            if (cfg.hasDragHandle)
               Positioned(
                 top: 8,
                 left: 0,
@@ -312,7 +279,7 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
                 ),
               ),
             // Close Button
-            if (showCloseButton)
+            if (cfg.showCloseButton)
               Positioned(
                 top: NinjaLayerUtils.scaleValue(8, parentSize, isVertical: true) ?? 8,
                 right: NinjaLayerUtils.scaleValue(8, parentSize) ?? 8,
@@ -334,12 +301,12 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       ),
     );
 
-    // ✅ FEATURE: Support Container Actions
-    if (responsiveConfig['action'] != null) {
+    // Container Actions
+    if (cfg.action != null) {
       sheetContent = _buildInteraction(sheetContent, {
         'type': 'container',
         'content': {
-          'action': responsiveConfig['action'],
+          'action': cfg.action,
         }
       });
     }
@@ -350,19 +317,19 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
         GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () {
-            if (responsiveConfig['overlay']?['dismissOnClick'] ?? true) {
+            if (cfg.dismissOnClick) {
               _handleDismiss();
             }
           },
           child: FadeTransition(
             opacity: _fadeAnimation,
             child: Container(
-              color: backdropColor,
-              child: responsiveConfig['overlay']?['blur'] != null 
+              color: cfg.backdropColor,
+              child: cfg.backdropBlur > 0 
                   ? BackdropFilter(
                       filter: ui.ImageFilter.blur(
-                        sigmaX: (responsiveConfig['overlay']['blur'] as num).toDouble(),
-                        sigmaY: (responsiveConfig['overlay']['blur'] as num).toDouble(),
+                        sigmaX: cfg.backdropBlur,
+                        sigmaY: cfg.backdropBlur,
                       ),
                       child: Container(color: Colors.transparent),
                     )
@@ -375,25 +342,28 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
           alignment: Alignment.bottomCenter,
           child: SlideTransition(
             position: _slideAnimation,
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onVerticalDragUpdate: (details) {
-                if (responsiveConfig['swipeToDismiss'] == true) {
-                  _controller.value -= details.primaryDelta! / (sheetHeight ?? screenHeight);
-                }
-              },
-              onVerticalDragEnd: (details) {
-                if (responsiveConfig['swipeToDismiss'] == true) {
-                  if (details.primaryVelocity! > 300 || _controller.value < 0.6) {
-                    _handleDismiss();
-                  } else {
-                    _controller.forward();
+            // ✅ OPTIMIZATION: RepaintBoundary for GPU composite
+            child: RepaintBoundary(
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onVerticalDragUpdate: (details) {
+                  if (cfg.swipeToDismiss) {
+                    _controller.value -= details.primaryDelta! / (cfg.sheetHeight ?? screenHeight);
                   }
-                }
-              },
-              child: Material(
-                color: Colors.transparent,
-                child: sheetContent,
+                },
+                onVerticalDragEnd: (details) {
+                  if (cfg.swipeToDismiss) {
+                    if (details.primaryVelocity! > 300 || _controller.value < 0.6) {
+                      _handleDismiss();
+                    } else {
+                      _controller.forward();
+                    }
+                  }
+                },
+                child: Material(
+                  color: Colors.transparent,
+                  child: sheetContent,
+                ),
               ),
             ),
           ),
@@ -403,13 +373,13 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
   }
 
   // ===========================================================================
-  // MODAL PARITY: Config Resolution (copied from ModalNudgeRenderer)
+  // Strict Config Parsing
   // ===========================================================================
   
-  Map<String, dynamic> _resolveResponsiveConfig(Map<String, dynamic> config, double screenWidth) {
+  ParsedBottomSheetConfig _resolveAndParseConfig(Map<String, dynamic> config, double screenWidth, BuildContext context) {
+    // 1. Resolve raw config (merging logic)
     var finalConfig = Map<String, dynamic>.from(config);
     
-    // Prioritize bottomSheetConfig / modalConfig values
     final sheetConfig = config['bottomSheetConfig'] as Map<String, dynamic>? ?? 
                         config['modalConfig'] as Map<String, dynamic>?;
     if (sheetConfig != null) {
@@ -422,20 +392,15 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
       if (sheetConfig['overlay'] != null) finalConfig['overlay'] = sheetConfig['overlay'];
     }
     
-    // Fallback: Recover from Container Component
     var components = (config['components'] as List?)?.map((e) => Map<String, dynamic>.from(e)).toList();
-    
     if (components != null && components.isNotEmpty) {
       finalConfig['components'] = components;
-
       final containerIndex = components.indexWhere(
         (c) => c['type'] == 'container' || c['name'] == 'Bottom Sheet' || c['name'] == 'Modal Container'
       );
-      
       if (containerIndex != -1) {
         final container = components[containerIndex];
         final style = Map<String, dynamic>.from(container['style'] as Map<String, dynamic>? ?? {});
-        
         if (finalConfig['backgroundImageUrl'] == null && style['backgroundImage'] != null) {
           finalConfig['backgroundImageUrl'] = style['backgroundImage'];
         }
@@ -445,21 +410,123 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
         if (finalConfig['borderRadius'] == null && style['borderRadius'] != null) {
           finalConfig['borderRadius'] = style['borderRadius'];
         }
-
-        // Neutralize inner container to prevent double styling
         style['backgroundColor'] = 'transparent';
         style['backgroundImage'] = null;
         style['width'] = '100%';
         style['height'] = '100%';
         style['padding'] = 0;
-        
         container['style'] = style;
         components[containerIndex] = container;
       }
     }
 
-    return finalConfig;
+    // 2. Parse values into strong types
+    final screenHeight = MediaQuery.of(context).size.height;
+    
+    // Parse Height
+    double? sheetHeight;
+    final rHeight = finalConfig['height'];
+    if (rHeight is num) {
+      sheetHeight = rHeight.toDouble();
+    } else if (rHeight is String) {
+      if (rHeight == 'auto') {
+        sheetHeight = null;
+      } else if (rHeight.endsWith('%')) {
+        final pct = double.tryParse(rHeight.replaceAll('%', ''));
+        if (pct != null) sheetHeight = screenHeight * pct / 100;
+      } else {
+        sheetHeight = double.tryParse(rHeight.replaceAll('px', ''));
+      }
+    }
+
+    // Colors & Radius
+    final backgroundColor = NinjaLayerUtils.parseColor(finalConfig['backgroundColor']) ?? Colors.white;
+    final borderRadiusRaw = finalConfig['borderRadius'];
+    double topLeftRadius = 16.0;
+    double topRightRadius = 16.0;
+    if (borderRadiusRaw is num) {
+      topLeftRadius = borderRadiusRaw.toDouble();
+      topRightRadius = borderRadiusRaw.toDouble();
+    } else if (borderRadiusRaw is Map) {
+      topLeftRadius = (borderRadiusRaw['topLeft'] as num?)?.toDouble() ?? 16.0;
+      topRightRadius = (borderRadiusRaw['topRight'] as num?)?.toDouble() ?? 16.0;
+    }
+
+    // Check for absolute layers (Loop logic moved here)
+    bool hasAbsolutePositionedLayers = false;
+    final comps = finalConfig['components'] as List?;
+    if (comps != null) {
+      for (final component in comps) {
+        if (component is Map<String, dynamic>) {
+          final style = component['style'] as Map<String, dynamic>? ?? {};
+          if (style['position'] == 'absolute' || style['position'] == 'fixed') {
+            hasAbsolutePositionedLayers = true;
+            break;
+          }
+          final children = component['children'] as List?;
+          if (children != null) {
+            for (final child in children) {
+              if (child is Map<String, dynamic>) {
+                final childStyle = child['style'] as Map<String, dynamic>? ?? {};
+                if (childStyle['position'] == 'absolute' || childStyle['position'] == 'fixed') {
+                   hasAbsolutePositionedLayers = true;
+                   break;
+                }
+              }
+            }
+          }
+          if (hasAbsolutePositionedLayers) break;
+        }
+      }
+    }
+
+    final padding = hasAbsolutePositionedLayers 
+        ? EdgeInsets.zero 
+        : NinjaLayerUtils.parsePadding(finalConfig['padding'] ?? EdgeInsets.zero);
+
+    final showCloseButton = finalConfig['showCloseButton'] == true;
+
+    // Overlay
+    final overlayColor = NinjaLayerUtils.parseColor(finalConfig['overlay']?['color']) ?? Colors.black;
+    final overlayOpacity = (finalConfig['overlay']?['opacity'] as num?)?.toDouble() ?? 0.5;
+    final backdropColor = overlayColor.withOpacity(overlayOpacity);
+    final backdropBlur = (finalConfig['overlay']?['blur'] as num?)?.toDouble() ?? 0.0;
+    final dismissOnClick = finalConfig['overlay']?['dismissOnClick'] ?? true;
+
+    final backgroundImageUrl = finalConfig['backgroundImageUrl'] as String?;
+    
+    final maxHeight = NinjaLayerUtils.parseResponsiveSize(finalConfig['maxHeight'], context, isVertical: true) ?? screenHeight * 0.9;
+    
+    final shadows = NinjaLayerUtils.parseShadows(finalConfig['shadows']) ?? [
+      BoxShadow(
+        color: Colors.black.withOpacity(0.12),
+        blurRadius: 16,
+        offset: const Offset(0, -4),
+      )
+    ];
+
+    return ParsedBottomSheetConfig(
+      rawConfig: finalConfig,
+      sheetHeight: sheetHeight,
+      backgroundColor: backgroundColor,
+      topLeftRadius: topLeftRadius,
+      topRightRadius: topRightRadius,
+      padding: padding ?? EdgeInsets.zero,
+      hasAbsolutePositionedLayers: hasAbsolutePositionedLayers,
+      showCloseButton: showCloseButton,
+      backdropColor: backdropColor,
+      backdropBlur: backdropBlur,
+      dismissOnClick: dismissOnClick,
+      backgroundImageUrl: (backgroundImageUrl != null && backgroundImageUrl.isNotEmpty) ? backgroundImageUrl : null,
+      maxHeight: maxHeight,
+      shadows: shadows,
+      isScrollable: finalConfig['scrollable'] == true,
+      hasDragHandle: finalConfig['dragHandle'] == true,
+      swipeToDismiss: finalConfig['swipeToDismiss'] == true,
+      action: finalConfig['action'] as Map<String, dynamic>?,
+    );
   }
+
 
   // ===========================================================================
   // MODAL PARITY: _buildContent (copied from ModalNudgeRenderer)
@@ -588,9 +655,17 @@ class _BottomSheetNudgeRendererState extends State<BottomSheetNudgeRenderer> wit
     }
 
     if (absoluteEntries.isNotEmpty) {
+      // ✅ FINAL POSITIONING LOGIC (Parity with Modal):
+      // 1. If dimensions are FIXED, force Stack to fill that size.
+      // 2. If dimensions are AUTO (null), let Stack shrink-wrap (unless it's full screen sheet).
+      // Note: BottomSheet usually has width=screen, but height can be auto.
+      
+      final isFixedWidth = _cachedConfig?.rawConfig['width'] != 'auto' && _cachedConfig?.rawConfig['width'] != null; // Simplified check
+      final isFixedHeight = _cachedConfig?.sheetHeight != null;
+      
       return SizedBox(
-        width: parentSize.width,
-        height: parentSize.height,
+        width: isFixedWidth ? parentSize.width : null,
+        height: isFixedHeight ? parentSize.height : null,
         child: Stack(
           clipBehavior: Clip.none,
           children: [

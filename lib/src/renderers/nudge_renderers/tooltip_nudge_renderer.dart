@@ -40,6 +40,9 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
   // Target element bounds
   Rect? _targetRect;
   bool _hasScrolledToTarget = false;
+  
+  // Compositor Tracking
+  LayerLink? _targetLink;
 
   @override
   void initState() {
@@ -65,6 +68,18 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       _resolveTargetElement();
     });
   }
+  @override
+  void didUpdateWidget(TooltipNudgeRenderer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.campaign.id != oldWidget.campaign.id || 
+        widget.campaign.config != oldWidget.campaign.config) {
+       // Config changed (e.g. editor update), re-resolve target
+       // Use post frame to ensure any layout changes are settled
+       WidgetsBinding.instance.addPostFrameCallback((_) {
+         if (mounted) _resolveTargetElement();
+       });
+    }
+  }
 
   void _resolveTargetElement() {
     final config = widget.campaign.config;
@@ -80,10 +95,20 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                      config['target_element_id']?.toString();
     
     debugPrint('InAppNinja: 🔍 Looking for targetElementId: $targetId');
-    debugPrint('InAppNinja: 📦 Config keys: ${config.keys.toList()}');
-    debugPrint('InAppNinja: 📦 TooltipConfig keys: ${tooltipConfig.keys.toList()}');
     
     if (targetId != null) {
+      // 1. Try Compositor Link (Best Performance)
+      final link = AppNinja.getLink(targetId);
+      if (link != null) {
+        debugPrint('InAppNinja: 🔗 Found LayerLink for target!');
+        setState(() {
+          _targetLink = link; 
+          // We still need rect for Spotlight and arrow calculations
+          // But main positioning will be handled by Follower
+        });
+      }
+
+      // 2. Fallback to RenderBox (Required for Rect/Spotlight)
       final targetContext = AppNinja.getTargetContext(targetId);
       if (targetContext != null) {
         final renderBox = targetContext.findRenderObject() as RenderBox?;
@@ -98,7 +123,6 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
             );
           });
           
-          // 🔥 DEBUG: Print target rect
           debugPrint('🎯 Target Found! _targetRect: $_targetRect');
           
           // Auto-scroll if target is not in viewport
@@ -110,8 +134,8 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
           _controller.forward();
         }
       } else {
-        // No target found, show centered
-        _controller.forward();
+        // No target context found, show centered or at least show simple tooltip
+         _controller.forward();
       }
     } else {
       // No target specified
@@ -319,128 +343,210 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
     debugPrint('overlayColor: $overlayColor, overlayOpacity: $overlayOpacity');
     debugPrint('layers count: ${layers.length}');
     debugPrint('============================');
-    debugPrint('🔍 overlayEnabled: $overlayEnabled, _targetRect: $_targetRect');
+    debugPrint('🔍 overlayEnabled: $overlayEnabled, _targetRect: $_targetRect, _targetLink: ${_targetLink != null}');
     if (_targetRect != null) {
       final screenHeight = MediaQuery.of(context).size.height;
       final bottomValue = screenHeight - _targetRect!.top + arrowSize + 4 - offsetY;
       debugPrint('📐 Screen height: $screenHeight, bottom value: $bottomValue');
     }
 
+    // Prepare Tooltip Body Widget
+    // We construct this once effectively
+    final tooltipBodyWidget = position == 'top'
+        ? FractionalTranslation(
+            translation: const Offset(0, -1),
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: ScaleTransition(
+                scale: _scaleAnimation,
+                alignment: Alignment.bottomCenter,
+                child: _buildTooltipBody(
+                  layers,
+                  position,
+                  tooltipWidth,
+                  tooltipBgColor,
+                  backgroundOpacity,
+                  borderRadius,
+                  padding,
+                  arrowEnabled,
+                  arrowSize,
+                  arrowRoundness,
+                  arrowPositionPercent,
+                  shadowEnabled,
+                  shadowBlur,
+                  shadowOpacity,
+                  shadowOffsetX,
+                  shadowOffsetY,
+                  tooltipHeight,
+                  scaleRatio,
+                  backgroundImageUrl,
+                  backgroundSize,
+                ),
+              ),
+            ),
+          )
+        : FadeTransition(
+            opacity: _fadeAnimation,
+            child: ScaleTransition(
+              scale: _scaleAnimation,
+              alignment: _getScaleAlignment(position),
+              child: _buildTooltipBody(
+                layers,
+                position,
+                tooltipWidth,
+                tooltipBgColor,
+                backgroundOpacity,
+                borderRadius,
+                padding,
+                arrowEnabled,
+                arrowSize,
+                arrowRoundness,
+                arrowPositionPercent,
+                shadowEnabled,
+                shadowBlur,
+                shadowOpacity,
+                shadowOffsetX,
+                shadowOffsetY,
+                tooltipHeight,
+                scaleRatio,
+                backgroundImageUrl,
+                backgroundSize,
+              ),
+            ),
+          );
+
     return Material(
       color: Colors.transparent,
       child: Stack(
         children: [
-          // Overlay with Spotlight (cutout for target)
-          if (overlayEnabled)
-            GestureDetector(
-              // Only dismiss on outside click if setting is enabled
-              onTap: closeOnOutsideClick ? _handleDismiss : null,
-              child: _targetRect != null
-                  ? CustomPaint(
-                      size: MediaQuery.of(context).size,
-                      painter: _SpotlightPainter(
-                        targetRect: _targetRect!,
-                        overlayColor: overlayColor.withOpacity(overlayOpacity),
-                        targetBorderRadius: targetBorderRadius,
-                        targetBorderColor: targetBorderColor,
-                        targetBorderWidth: targetBorderWidth,
-                      ),
-                    )
-                  : Container(
-                      color: overlayColor.withOpacity(overlayOpacity),
-                    ),
-            ),
           
-          // Clickable target area (for closeOnTargetClick)
-          if (_targetRect != null && closeOnTargetClick)
-            Positioned(
-              left: _targetRect!.left,
-              top: _targetRect!.top,
-              width: _targetRect!.width,
-              height: _targetRect!.height,
-              child: GestureDetector(
-                onTap: _handleDismiss,
-                child: const ColoredBox(color: Colors.transparent),
-              ),
-            ),
-
-          // Tooltip Positioned
-          if (_targetRect != null)
-            Positioned(
-              // Use rawWidth for positioning (always available), but tooltipWidth for rendering
-              left: _calculateTooltipX(position, _targetRect!, tooltipWidth ?? rawWidth * scaleRatio, arrowSize, offsetX, scaleRatio),
-              // For 'top': position anchor at target.top, then shift UP by tooltip height
-              // FIX: No gap - arrow should touch target directly when offsetY=0
-              top: position == 'top' 
-                  ? (_targetRect!.top + offsetY)
-                  : _calculateTooltipY(position, _targetRect!, 0, offsetY, scaleRatio),
-              child: position == 'top'
-                  // For 'top': shift entire tooltip UP by its own height using FractionalTranslation
-                  ? FractionalTranslation(
-                      translation: const Offset(0, -1), // Move up by 100% of widget height
-                      child: FadeTransition(
-                        opacity: _fadeAnimation,
-                        child: ScaleTransition(
-                          scale: _scaleAnimation,
-                          alignment: Alignment.bottomCenter,
-                          child: _buildTooltipBody(
-                            layers,
-                            position,
-                            tooltipWidth,
-                            tooltipBgColor,
-                            backgroundOpacity,
-                            borderRadius,
-                            padding,
-                            arrowEnabled,
-                            arrowSize,
-                            arrowRoundness,
-                            arrowPositionPercent, // Arrow position along edge
-                            shadowEnabled,
-                            shadowBlur,
-                            shadowOpacity,
-                            shadowOffsetX, // FIX: Add missing params
-                            shadowOffsetY,
-                            tooltipHeight,
-                            scaleRatio,
-                            backgroundImageUrl, // FIX: Pass background image
-                            backgroundSize,
+          // ============================================
+          // 🚀 OPTIMIZED SPOTLIGHT OVERLAY (The "Hole")
+          // ============================================
+          if (overlayEnabled) ...[
+            // 1. If we have a Link (Compositor), use the Shadow-Hole Trick
+            // This is the "Optimal Way" - 60fps tracking on scroll
+            if (_targetLink != null && _targetRect != null)
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: closeOnOutsideClick ? _handleDismiss : null,
+                  child: Stack(
+                    children: [
+                      CompositedTransformFollower(
+                        link: _targetLink!,
+                        showWhenUnlinked: false,
+                        offset: Offset.zero, // Stick to top-left of target
+                        child: Container(
+                          width: _targetRect!.width,
+                          height: _targetRect!.height,
+                          decoration: BoxDecoration(
+                            color: Colors.transparent, // vital!
+                            borderRadius: BorderRadius.circular(targetBorderRadius),
+                            border: Border.all(
+                              color: targetBorderColor,
+                              width: targetBorderWidth,
+                            ),
+                            boxShadow: [
+                              // The "Hole" Trick: Creating a shadow so massive it covers the screen
+                              // but leaves the container itself transparent (the hole)
+                              BoxShadow(
+                                color: overlayColor.withOpacity(overlayOpacity),
+                                spreadRadius: MediaQuery.of(context).size.longestSide * 2, // Huge spread
+                                blurRadius: 0, // Sharp edge for the hole
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                    )
-                  // For other positions: normal positioning
-                  : FadeTransition(
-                      opacity: _fadeAnimation,
-                      child: ScaleTransition(
-                        scale: _scaleAnimation,
-                        alignment: _getScaleAlignment(position),
-                        child: _buildTooltipBody(
-                          layers,
-                          position,
-                          tooltipWidth,
-                          tooltipBgColor,
-                          backgroundOpacity,
-                          borderRadius,
-                          padding,
-                          arrowEnabled,
-                          arrowSize,
-                          arrowRoundness,
-                          arrowPositionPercent, // Arrow position along edge
-                          shadowEnabled,
-                          shadowBlur,
-                          shadowOpacity,
-                          shadowOffsetX, // FIX: Pass shadow offset
-                          shadowOffsetY,
-                          tooltipHeight,
-                          scaleRatio,
-                          backgroundImageUrl, // FIX: Pass background image
-                          backgroundSize,
-                        ),
-                      ),
-                    ),
+                    ],
+                  ),
+                ),
+              )
+            // 2. Fallback: CustomPainter (Static, might lag on scroll)
+            // Used when target is not tagged with EmbedWidgetWrapper
+            else if (_targetRect != null)
+              GestureDetector(
+                onTap: closeOnOutsideClick ? _handleDismiss : null,
+                child: CustomPaint(
+                  size: MediaQuery.of(context).size,
+                  painter: _SpotlightPainter(
+                    targetRect: _targetRect!,
+                    overlayColor: overlayColor.withOpacity(overlayOpacity),
+                    targetBorderRadius: targetBorderRadius,
+                    targetBorderColor: targetBorderColor,
+                    targetBorderWidth: targetBorderWidth,
+                  ),
+                ),
+              )
+            // 3. Just a full screen dimmer if no target found
+            else
+               GestureDetector(
+                onTap: closeOnOutsideClick ? _handleDismiss : null,
+                child: Container(
+                  color: overlayColor.withOpacity(overlayOpacity),
+                ),
+              ),
+          ],
+          
+          // Clickable target area (for closeOnTargetClick)
+          if (_targetRect != null && closeOnTargetClick)
+             // If we have a link, we need to follow it to catch taps correctly during scroll
+             if (_targetLink != null)
+               CompositedTransformFollower(
+                 link: _targetLink!,
+                 showWhenUnlinked: false,
+                 child: SizedBox(
+                   width: _targetRect!.width,
+                   height: _targetRect!.height,
+                   child: GestureDetector(
+                     onTap: _handleDismiss,
+                     behavior: HitTestBehavior.translucent, // Catch taps
+                   ),
+                 ),
+               )
+             else
+              Positioned(
+                left: _targetRect!.left,
+                top: _targetRect!.top,
+                width: _targetRect!.width,
+                height: _targetRect!.height,
+                child: GestureDetector(
+                  onTap: _handleDismiss,
+                  child: const ColoredBox(color: Colors.transparent),
+                ),
+              ),
+
+          // ============================================
+          // 🚀 TOOLTIP BUBBLE POSITIONING
+          // ============================================
+          if (_targetLink != null)
+             // OPTIMAL WAY: CompositedTransformFollower
+             // Tracks the target logic 60fps on compositor thread
+             CompositedTransformFollower(
+               link: _targetLink!,
+               showWhenUnlinked: false,
+               // Adjust offset based on position
+               // For 'top', we need to offset by -height (handled by FractionalTranslation) 
+               // and offsetY.
+               // But Follower default is Top-Left of target.
+               offset: _calculateFollowerOffset(position, _targetRect!, offsetX, offsetY, scaleRatio, arrowSize),
+               child: Align(
+                 // We align the child relative to the follower anchor point
+                 alignment: _getFollowerAlignment(position),
+                 child: tooltipBodyWidget,
+               ),
+             )
+          else if (_targetRect != null)
+             // LEGACY WAY: Absolute Positioned
+            Positioned(
+              left: _calculateTooltipX(position, _targetRect!, tooltipWidth ?? rawWidth * scaleRatio, arrowSize, offsetX, scaleRatio),
+              top: position == 'top' 
+                  ? (_targetRect!.top + offsetY)
+                  : _calculateTooltipY(position, _targetRect!, 0, offsetY, scaleRatio),
+              child: tooltipBodyWidget,
             )
           else
-            // Centered fallback when no target
+            // Centered fallback
             Center(
               child: FadeTransition(
                 opacity: _fadeAnimation,
@@ -461,11 +567,11 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
                     shadowEnabled,
                     shadowBlur,
                     shadowOpacity,
-                    shadowOffsetX, // FIX: Pass shadow offset
+                    shadowOffsetX,
                     shadowOffsetY,
                     tooltipHeight,
                     scaleRatio,
-                    backgroundImageUrl, // FIX: Pass background image
+                    backgroundImageUrl,
                     backgroundSize,
                   ),
                 ),
@@ -475,6 +581,59 @@ class _TooltipNudgeRendererState extends State<TooltipNudgeRenderer>
       ),
     );
   }
+
+  // Helper to calculate offset for CompositedTransformFollower
+  Offset _calculateFollowerOffset(
+    String position, 
+    Rect targetRect, 
+    double offsetX, 
+    double offsetY, 
+    double scaleRatio, 
+    double arrowSize
+  ) {
+    // Default: Follower anchor is at Top-Left of target (0,0)
+    
+    switch (position) {
+      case 'bottom':
+        // Anchor: Bottom-Left of target
+        // Tooltip starts at Bottom-Left of target + OffsetX, OffsetY
+        // We need to shift DOWN by target Height + Arrow + OffsetY
+        // We shift RIGHT by OffsetX
+        return Offset(offsetX, targetRect.height + arrowSize + 4 + offsetY);
+        
+      case 'top':
+        // Anchor: Top-Left of target
+        // We shift UP by Arrow + OffsetY
+        // Note: The body itself is shifted UP by its height via FractionalTranslation
+        return Offset(offsetX, -(arrowSize + 4) + offsetY);
+        
+      case 'right':
+        // Anchor: Top-Right of target
+        // Shift RIGHT by arrow size
+        return Offset(targetRect.width + arrowSize + 4 + offsetX, offsetY);
+        
+      case 'left':
+         // Anchor: Top-Left of target
+         // Shift LEFT by Arrow + TooltipWidth (Wait, we don't know width here easily for offset...)
+         // Better strategy:
+         // For Left/Right, we might need to rely on alignment or assume width.
+         // Actually, if we use Align widget inside Follower, we can control it better.
+         return Offset(-(arrowSize + 4) + offsetX, offsetY);
+         
+      default:
+        return Offset.zero;
+    }
+  }
+
+   Alignment _getFollowerAlignment(String position) {
+      switch (position) {
+        case 'bottom': return Alignment.topLeft; // Actually, we want to align the tooltip's TopLeft to the offset point
+        case 'top': return Alignment.bottomLeft; // We want tooltip's BottomLeft attached
+        case 'right': return Alignment.topLeft;
+        case 'left': return Alignment.topRight; 
+        default: return Alignment.center;
+      }
+   }
 
   Widget _buildTooltipBody(
     List<dynamic> layers,

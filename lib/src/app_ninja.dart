@@ -101,12 +101,10 @@ class AppNinja {
   // Navigation key for global context access
   static GlobalKey<NavigatorState>? _navigatorKey;
 
+  // Element positions cache
+  static final Map<String, dynamic> _elementPositions = {};
+
   // 🎯 RACE CONDITION PREVENTION: Navigation Token System
-  // Hybrid Cache State
-  static List<Campaign> _cachedCampaigns = [];
-  static DateTime? _cacheTimestamp;
-  static Timer? _backgroundRefreshTimer;
-  static bool _isRefreshing = false;
 
   // Round-robin tracking for sequential campaign display
   static final Map<String, int> _roundRobinIndex = {};
@@ -145,6 +143,10 @@ class AppNinja {
       }
 
       _autoRenderEnabled = autoRender;
+
+      // 🛑 DEBUG: Force Clear Cache to prevent stale "Arctic" status
+      // This ensures we don't show cached campaigns if the network fetch fails.
+      await clearCampaignCache();
 
       _prefs = await SharedPreferences.getInstance();
 
@@ -193,17 +195,22 @@ class AppNinja {
 
   // TARGET REGISTRY (For Tooltips)
   static final Map<String, BuildContext> _targetRegistry = {};
+  static final Map<String, LayerLink> _linkRegistry = {};
 
   /// Register a widget target for finding tooltips
-  static void registerTarget(String id, BuildContext context) {
+  static void registerTarget(String id, BuildContext context, {LayerLink? link}) {
     _targetRegistry[id] = context;
-    debugLog('📍 Registered Target: $id');
+    if (link != null) {
+      _linkRegistry[id] = link;
+    }
+    debugLog('📍 Registered Target: $id (LayerLink: ${link != null})');
   }
 
   /// Unregister a widget target
   static void unregisterTarget(String id) {
     if (_targetRegistry.containsKey(id)) {
       _targetRegistry.remove(id);
+      _linkRegistry.remove(id);
       debugLog('🗑️ Unregistered Target: $id');
     }
   }
@@ -211,6 +218,11 @@ class AppNinja {
   /// Get context for a target ID
   static BuildContext? getTargetContext(String id) {
     return _targetRegistry[id];
+  }
+
+  /// Get LayerLink for a target ID
+  static LayerLink? getLink(String id) {
+    return _linkRegistry[id];
   }
 
   /// Track an event
@@ -221,8 +233,16 @@ class AppNinja {
       {Map<String, dynamic> properties = const {}}) async {
     _ensureInitialized();
 
+    // 🔍 DEBUG: Log what we're tracking
+    debugPrint('📍 AppNinja.track("$eventName") called');
+    debugPrint('   📦 Cached campaigns: ${_cachedCampaigns.length}');
+    for (var c in _cachedCampaigns) {
+      debugPrint('   🎯 Campaign "${c.title}" trigger="${c.trigger}" status="${c.status}"');
+    }
+
     // 🚀 PHASE 1: Instant client-side matching (0ms)
     final matchedCampaigns = _matchCampaignsLocally(eventName, properties);
+    debugPrint('   ✅ Matched campaigns: ${matchedCampaigns.length}');
     
     if (matchedCampaigns.isNotEmpty) {
       final triggerToken = _navigationToken;
@@ -286,15 +306,23 @@ class AppNinja {
     }
     
     return _cachedCampaigns.where((campaign) {
-      // Check triggers
-      if (campaign.triggers == null || campaign.triggers!.isEmpty) {
-        return false;
+      // 🛑 FAIL-SAFE: Never show inactive campaigns (even if cached)
+      if (campaign.status != 'active') return false;
+
+      // ✅ FIX: Check BOTH single `trigger` string AND `triggers` array
+      bool hasMatchingTrigger = false;
+      
+      // 1. Check single trigger string (primary - from backend)
+      if (campaign.trigger != null && campaign.trigger!.isNotEmpty) {
+        hasMatchingTrigger = campaign.trigger == eventName;
       }
       
-      // Match event name
-      final hasMatchingTrigger = campaign.triggers!.any((trigger) {
-        return trigger['event'] == eventName;
-      });
+      // 2. Check triggers array (fallback)
+      if (!hasMatchingTrigger && campaign.triggers != null && campaign.triggers!.isNotEmpty) {
+        hasMatchingTrigger = campaign.triggers!.any((trigger) {
+          return trigger['event'] == eventName;
+        });
+      }
       
       if (!hasMatchingTrigger) return false;
       
@@ -394,7 +422,9 @@ class AppNinja {
   static Future<void> clearCampaignCache() async {
     _ensureInitialized();
     await _prefs?.remove(_prefsKeyCampaigns);
-    debugLog('🗑️ Campaign cache cleared');
+    await NinjaCampaignRepository().clearCache(); // ✅ FIX: Clear SQLite too
+    _cachedCampaigns = []; // ✅ FIX: Clear memory too
+    debugLog('🗑️ Campaign cache cleared (Prefs + SQLite)');
   }
 
   /// Track page view
@@ -1206,8 +1236,9 @@ class AppNinja {
       _cachedCampaigns = limited;
       _cacheTimestamp = timestamp;
       
-      // Emit to stream for auto-rendering
-      _campaignController.add(limited);
+      // ✅ FIX: Don't emit to stream on cache load!
+      // Campaigns should only be emitted when triggered by events via track()
+      // _campaignController.add(limited); // REMOVED - causes auto-show without trigger
       
       debugLog('✅ Loaded ${limited.length} campaigns from cache (age: ${age.inMinutes}min)');
     } catch (e, stack) {
@@ -1246,10 +1277,13 @@ class AppNinja {
       // Update in-memory
       _cachedCampaigns = limited;
       
-      // Emit to stream
-      _campaignController.add(limited);
+      // ✅ FIX: Don't emit to stream on background refresh!
+      // Campaigns should only be emitted when triggered by events via track()
+      // _campaignController.add(limited); // REMOVED - causes auto-show without trigger
       
       debugLog('✅ Background refresh complete: ${limited.length} campaigns');
+      debugLog('   📦 Cache updated: ${limited.length} campaigns');
+      debugLog('   ℹ️ Campaigns will show when trigger events fire');
     } catch (e) {
       debugLog('⚠️ Background refresh failed: $e');
       // Don't throw - just log. Use cached data.
@@ -1446,15 +1480,39 @@ class AppNinja {
 
   /// Auto-show campaign (universal renderer for all types)
   static void _autoShowCampaign(Campaign campaign) {
+    // ✅ FIX: Respect display rules for frequency FIRST
+    // Check if campaign allows "every time" display
+    // Backend may send as displayRules or display_rules
+    final displayRules = (campaign.config['displayRules'] ?? campaign.config['display_rules']) as Map<String, dynamic>?;
+    final frequencyType = displayRules?['frequency']?['type'] as String? ?? 'every_time';
+    final interactionLimitType = displayRules?['interactionLimit']?['type'] as String? ?? 'unlimited';
+    
+    // Campaigns that allow repeat don't need token validation
+    final allowRepeat = frequencyType == 'every_time' || interactionLimitType == 'unlimited';
+    
+    debugLog('📋 Display rules check: frequency=$frequencyType, interactionLimit=$interactionLimitType, allowRepeat=$allowRepeat');
+
     // 🎯 VALIDATION 1: Navigation Token Check (Race Condition Prevention)
-    // If user navigated to a different page before campaign loaded, skip display
-    final campaignToken = _campaignNavigationTokenMap[campaign.id];
-    if (campaignToken != null && campaignToken != _navigationToken) {
-      debugLog(
-          '⏭️ Skipping campaign "${campaign.title}" (${campaign.id}): '
-          'User navigated away (Token mismatch: campaign=$campaignToken, current=$_navigationToken)');
-      _campaignNavigationTokenMap.remove(campaign.id); // Cleanup
-      return;
+    // ONLY apply token check for campaigns that DON'T allow repeat
+    // For "every time" campaigns, skip this check entirely
+    if (!allowRepeat) {
+      final campaignToken = _campaignNavigationTokenMap[campaign.id];
+      if (campaignToken != null && campaignToken != _navigationToken) {
+        // Check if tokens are within reasonable time (they're timestamps as strings)
+        final campaignTs = int.tryParse(campaignToken) ?? 0;
+        final currentTs = int.tryParse(_navigationToken) ?? 0;
+        final timeDiff = (currentTs - campaignTs).abs();
+        if (timeDiff > 1000) {
+          debugLog(
+              '⏭️ Skipping campaign "${campaign.title}" (${campaign.id}): '
+              'User navigated away (Token mismatch: campaign=$campaignToken, current=$_navigationToken, diff=${timeDiff}ms)');
+          _campaignNavigationTokenMap.remove(campaign.id); // Cleanup
+          return;
+        }
+        debugLog('ℹ️ Token mismatch within tolerance (${timeDiff}ms), allowing campaign');
+      }
+    } else {
+      debugLog('ℹ️ Skipping token validation - campaign allows repeat display');
     }
 
     // Resolve context: Prefer Navigator's OVERLAY context (child of Navigator) 
@@ -1468,12 +1526,11 @@ class AppNinja {
       return;
     }
 
-    // Prevent duplicates - check if this campaign was already shown in this session
-    // EXCEPTION: If it is currently active, we might want to refresh it? 
-    // For now, let's treat "Active" as "Shown".
-    if (_shownCampaignsThisSession.contains(campaign.id) && !_activeCampaignDismissals.containsKey(campaign.id)) {
-      debugLog(
-          'ℹ️ Campaign ${campaign.id} already shown this session, skipping auto-render');
+    // Session check - only block if campaign doesn't allow repeat AND already shown
+    debugLog('   📋 Already shown this session: ${_shownCampaignsThisSession.contains(campaign.id)}');
+    
+    if (!allowRepeat && _shownCampaignsThisSession.contains(campaign.id) && !_activeCampaignDismissals.containsKey(campaign.id)) {
+      debugLog('ℹ️ Campaign ${campaign.id} already shown this session, skipping auto-render (frequency: $frequencyType)');
       return;
     }
 

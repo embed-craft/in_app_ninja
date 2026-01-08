@@ -22,7 +22,7 @@ class NinjaDatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 2, // Bump version for migration
+      version: 3, // Bump version for trigger column migration
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -35,6 +35,10 @@ class NinjaDatabaseHelper {
       await db.execute('ALTER TABLE campaigns ADD COLUMN layers TEXT');
       await db.execute('ALTER TABLE campaigns ADD COLUMN title TEXT');
     }
+    if (oldVersion < 3) {
+      // Add trigger column for event matching
+      await db.execute('ALTER TABLE campaigns ADD COLUMN trigger TEXT');
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -45,6 +49,7 @@ class NinjaDatabaseHelper {
         title TEXT,
         config TEXT,
         triggers TEXT,
+        trigger TEXT,
         layers TEXT,
         interfaces TEXT,
         priority INTEGER DEFAULT 0,
